@@ -1,0 +1,163 @@
+import { useEffect, useState } from 'react'
+import { Helmet } from 'react-helmet-async'
+import { LayoutDashboard, BookOpen, FileCheck, Users, CheckCircle2, Clock3 } from 'lucide-react'
+import DashboardLayout from '../components/DashboardLayout.jsx'
+import { api } from '../lib/api.js'
+import { useAuth } from '../context/useAuth.js'
+
+const navItems = [
+  { to: '/dashboard/instructor', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/dashboard/instructor/content', label: 'Course Content', icon: BookOpen },
+  { to: '/dashboard/instructor/submissions', label: 'Submissions', icon: FileCheck },
+  { to: '/dashboard/instructor/students', label: 'Students', icon: Users },
+]
+
+export default function InstructorSubmissions() {
+  const { auth } = useAuth()
+  const [submissions, setSubmissions] = useState([])
+  const [filter, setFilter] = useState('submitted')
+  const [error, setError] = useState('')
+  const [status, setStatus] = useState('')
+
+  function reload() {
+    const query = filter ? `?status=${filter}` : ''
+    api.get(`/submissions/${query}`).then(setSubmissions).catch((err) => setError(err.message))
+  }
+
+  useEffect(reload, [filter])
+
+  return (
+    <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Instructor' }}>
+      <Helmet><meta name="robots" content="noindex, nofollow" /></Helmet>
+
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-text-muted">Review</p>
+            <h2 className="mt-1 text-2xl font-bold text-ink">Submissions</h2>
+          </div>
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
+          >
+            <option value="submitted">Pending review</option>
+            <option value="graded">Graded</option>
+            <option value="">All</option>
+          </select>
+        </div>
+
+        {error && <div className="rounded-lg border border-line bg-coral-tint px-4 py-3 text-sm text-coral-dim">{error}</div>}
+        {status && <div className="rounded-lg border border-mint/40 bg-mint/10 px-4 py-3 text-sm text-mint">{status}</div>}
+
+        <div className="space-y-3">
+          {submissions.map((s) => (
+            <SubmissionRow key={s.id} submission={s} onGraded={() => { setStatus('Grade saved.'); reload() }} />
+          ))}
+          {submissions.length === 0 && (
+            <p className="rounded-2xl border border-line bg-paper p-6 text-sm text-text-muted">Nothing here.</p>
+          )}
+        </div>
+      </div>
+    </DashboardLayout>
+  )
+}
+
+function SubmissionRow({ submission, onGraded }) {
+  const [grading, setGrading] = useState(false)
+  const [grade, setGrade] = useState(submission.grade ?? '')
+  const [feedback, setFeedback] = useState(submission.feedback ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleSave(e) {
+    e.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await api.patch(`/submissions/${submission.id}/grade/`, { grade: Number(grade), feedback })
+      setGrading(false)
+      onGraded?.()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-line bg-paper p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="font-medium text-ink">{submission.activity_title}</p>
+          <p className="text-sm text-text-muted">{submission.student_name || `Student #${submission.student}`}</p>
+          <p className="mt-1 text-xs text-text-dim">
+            Attempt {submission.attempt_number} · {new Date(submission.submitted_at).toLocaleString()}
+          </p>
+        </div>
+        {submission.status === 'graded' ? (
+          <span className="flex items-center gap-1.5 rounded-full bg-mint/15 px-3 py-1 text-sm font-medium text-mint">
+            <CheckCircle2 size={14} /> {submission.grade} pts
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 rounded-full bg-panel px-3 py-1 text-sm text-text-muted">
+            <Clock3 size={14} /> Pending
+          </span>
+        )}
+      </div>
+
+      {submission.content && (
+        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-panel p-3 font-mono text-xs text-ink">
+          {submission.content}
+        </pre>
+      )}
+      {submission.github_url && (
+        <a href={submission.github_url} target="_blank" rel="noreferrer" className="mt-2 block text-sm text-coral hover:underline">
+          {submission.github_url}
+        </a>
+      )}
+      {submission.file && (
+        <a href={submission.file} target="_blank" rel="noreferrer" className="mt-2 block text-sm text-coral hover:underline">
+          Download attached file
+        </a>
+      )}
+
+      {grading ? (
+        <form onSubmit={handleSave} className="mt-4 space-y-2 border-t border-line pt-4">
+          {error && <p className="text-sm text-coral-dim">{error}</p>}
+          <div className="flex gap-2">
+            <input
+              type="number"
+              value={grade}
+              onChange={(e) => setGrade(e.target.value)}
+              placeholder="Score"
+              required
+              className="w-28 rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
+            />
+            <input
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              placeholder="Feedback for the student"
+              className="flex-1 rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button disabled={busy} className="rounded-md bg-coral px-3 py-1.5 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60">
+              {busy ? 'Saving…' : 'Save grade'}
+            </button>
+            <button type="button" onClick={() => setGrading(false)} className="rounded-md border border-line px-3 py-1.5 text-sm text-ink">
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <button
+          onClick={() => setGrading(true)}
+          className="mt-4 rounded-md border border-line px-3 py-1.5 text-sm text-ink hover:border-text-dim"
+        >
+          {submission.status === 'graded' ? 'Update grade' : 'Grade this'}
+        </button>
+      )}
+    </div>
+  )
+}
