@@ -69,33 +69,44 @@ export default function CourseCatalog() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {courses.map((course) => {
               const isEnrolled = enrolledCourseIds.has(course.id)
-              return (
-                <div key={course.id} className="flex flex-col rounded-2xl border border-line bg-paper p-5">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-coral-tint text-coral-dim">
-                    <ClipboardList size={20} />
-                  </div>
-                  <h3 className="mt-3 font-semibold text-ink">{course.title}</h3>
-                  <p className="mt-1 line-clamp-2 flex-1 text-sm text-text-muted">{course.description}</p>
-                  <p className="mt-2 text-xs text-text-dim">
-                    {course.module_count} module{course.module_count === 1 ? '' : 's'} · {course.instructor_name}
-                  </p>
+              const coverImage = course.thumbnail_url || (course.thumbnail ? `http://localhost:8000/${course.thumbnail}` : null)
 
-                  {isEnrolled ? (
-                    <Link
-                      to={`/dashboard/student/courses/${course.id}`}
-                      className="mt-4 flex items-center justify-center gap-1.5 rounded-md bg-mint/15 py-2 text-sm font-medium text-mint hover:bg-mint/25"
-                    >
-                      <Check size={16} /> Enrolled — continue
-                    </Link>
-                  ) : (
-                    <button
-                      onClick={() => handleEnroll(course.id)}
-                      disabled={enrollingId === course.id}
-                      className="mt-4 rounded-md bg-coral py-2 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60"
-                    >
-                      {enrollingId === course.id ? 'Enrolling…' : 'Enroll'}
-                    </button>
-                  )}
+              return (
+                <div key={course.id} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-paper">
+                  <div className="relative h-32 w-full overflow-hidden bg-slate-100">
+                    {coverImage ? (
+                      <img src={coverImage} alt={course.title} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-violet-100 to-coral-tint text-coral-dim">
+                        <ClipboardList size={28} />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-1 flex-col p-5">
+                    <h3 className="font-semibold text-ink">{course.title}</h3>
+                    <p className="mt-1 line-clamp-2 flex-1 text-sm text-text-muted">{course.description}</p>
+                    <p className="mt-2 text-xs text-text-dim">
+                      {course.module_count} module{course.module_count === 1 ? '' : 's'} · {course.instructor_name}
+                    </p>
+
+                    {isEnrolled ? (
+                      <Link
+                        to={`/dashboard/student/courses/${course.id}`}
+                        className="mt-4 flex items-center justify-center gap-1.5 rounded-md bg-mint/15 py-2 text-sm font-medium text-mint hover:bg-mint/25"
+                      >
+                        <Check size={16} /> Enrolled — continue
+                      </Link>
+                    ) : (
+                      <button
+                        onClick={() => handleEnroll(course.id)}
+                        disabled={enrollingId === course.id}
+                        className="mt-4 rounded-md bg-coral py-2 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60"
+                      >
+                        {enrollingId === course.id ? 'Enrolling…' : 'Enroll'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             })}

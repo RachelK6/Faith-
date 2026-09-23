@@ -17,6 +17,9 @@ export default function InstructorContent() {
 
   const [courses, setCourses] = useState([])
   const [courseId, setCourseId] = useState('')
+  const [newCourse, setNewCourse] = useState({ title: '', description: '' })
+  const [thumbnailFile, setThumbnailFile] = useState(null)
+  const [thumbnailPreview, setThumbnailPreview] = useState('')
 
   const [modules, setModules] = useState([])
   const [moduleId, setModuleId] = useState('')
@@ -68,10 +71,55 @@ export default function InstructorContent() {
     setAttachments(selectedLesson?.attachments || [])
   }, [selectedLesson])
 
+  useEffect(() => {
+    if (!thumbnailFile) {
+      setThumbnailPreview('')
+      return
+    }
+
+    const objectUrl = URL.createObjectURL(thumbnailFile)
+    setThumbnailPreview(objectUrl)
+
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [thumbnailFile])
+
   function flash(message) {
     setStatus(message)
     setError('')
     setTimeout(() => setStatus(''), 3000)
+  }
+
+  async function handleAddCourse(e) {
+    e.preventDefault()
+    if (!newCourse.title.trim()) return
+    setBusy(true)
+    try {
+      let created
+      if (thumbnailFile) {
+        const formData = new FormData()
+        formData.append('title', newCourse.title.trim())
+        formData.append('description', newCourse.description.trim())
+        formData.append('thumbnail', thumbnailFile)
+        created = await api.upload('/courses/', formData)
+      } else {
+        created = await api.post('/courses/', {
+          title: newCourse.title.trim(),
+          description: newCourse.description.trim(),
+        })
+      }
+
+      setCourses((prev) => [...prev, created])
+      setCourseId(String(created.id))
+      setNewCourse({ title: '', description: '' })
+      setThumbnailFile(null)
+      setThumbnailPreview('')
+      e.target.reset()
+      flash('Course created.')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function handleAddModule(e) {
@@ -173,26 +221,98 @@ export default function InstructorContent() {
           <div className="rounded-lg border border-line bg-coral-tint px-4 py-3 text-sm text-coral-dim">{error}</div>
         )}
 
-        {/* Step 1: course */}
+        {/* Step 1: create or select a course */}
         <div className="rounded-2xl border border-line bg-paper p-6">
-          <label className="mb-1.5 block text-sm font-medium text-ink">Course</label>
-          {courses.length === 0 ? (
-            <p className="text-sm text-text-muted">
-              You don't have any courses yet — create one from the Django admin, or via the API, then it'll show up here.
-            </p>
-          ) : (
-            <select
-              value={courseId}
-              onChange={(e) => setCourseId(e.target.value)}
-              className="w-full max-w-sm rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
-            >
-              <option value="">Select a course…</option>
-              {courses.map((c) => (
-                <option key={c.id} value={c.id}>{c.title}</option>
-              ))}
-            </select>
-          )}
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="w-full max-w-lg">
+              <label className="mb-1.5 block text-sm font-medium text-ink">Course</label>
+              {courses.length === 0 ? (
+                <p className="text-sm text-text-muted">
+                  You don't have any courses yet — create one below to start building your curriculum.
+                </p>
+              ) : (
+                <select
+                  value={courseId}
+                  onChange={(e) => setCourseId(e.target.value)}
+                  className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
+                >
+                  <option value="">Select a course…</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>{c.title}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <form onSubmit={handleAddCourse} className="w-full max-w-xl space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">New course title</label>
+                <input
+                  value={newCourse.title}
+                  onChange={(e) => setNewCourse((prev) => ({ ...prev, title: e.target.value }))}
+                  placeholder="e.g. Web Development Bootcamp"
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-text-dim"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Description</label>
+                <textarea
+                  value={newCourse.description}
+                  onChange={(e) => setNewCourse((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Short description for the course"
+                  rows={3}
+                  className="w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink placeholder:text-text-dim"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Course thumbnail</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setThumbnailFile(e.target.files?.[0] || null)}
+                  className="w-full rounded-md border border-dashed border-line bg-white px-3 py-2 text-sm text-ink file:mr-3 file:rounded file:border-0 file:bg-violet-100 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-violet-700"
+                />
+                {thumbnailPreview && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-violet-200 bg-violet-50">
+                    <img src={thumbnailPreview} alt="Course thumbnail preview" className="h-28 w-full object-cover" />
+                  </div>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={busy || !newCourse.title.trim()}
+                className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-3 py-2 text-sm font-medium text-white hover:bg-violet-500 disabled:opacity-60"
+              >
+                <Plus size={16} /> Create course
+              </button>
+            </form>
+          </div>
         </div>
+
+        {courses.length > 0 && (
+          <div className="rounded-2xl border border-line bg-paper p-6">
+            <h3 className="font-semibold text-ink">Your course thumbnails</h3>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {courses.map((course) => {
+                const image = course.thumbnail_url || (course.thumbnail ? `http://localhost:8000/${course.thumbnail}` : null)
+                return (
+                  <div key={course.id} className="overflow-hidden rounded-xl border border-line bg-slate-50">
+                    <div className="h-28 w-full overflow-hidden bg-slate-100">
+                      {image ? (
+                        <img src={image} alt={course.title} className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center bg-gradient-to-br from-violet-100 to-slate-100 text-sm font-medium text-violet-700">
+                          No cover
+                        </div>
+                      )}
+                    </div>
+                    <div className="px-3 py-2 text-sm font-medium text-ink">{course.title}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {courseId && (
           <div className="grid gap-6 lg:grid-cols-2">

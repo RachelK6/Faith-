@@ -66,6 +66,11 @@ export default function CourseView() {
       <div className="space-y-6">
         <div>
           <Link to="/dashboard/student/courses" className="text-sm text-coral hover:text-coral-dim">← Back to courses</Link>
+          {(course?.thumbnail_url || (course?.thumbnail ? `http://localhost:8000/${course.thumbnail}` : null)) && (
+            <div className="mt-4 overflow-hidden rounded-2xl border border-line bg-paper">
+              <img src={course?.thumbnail_url || `http://localhost:8000/${course.thumbnail}`} alt={course.title} className="h-48 w-full object-cover" />
+            </div>
+          )}
           <h2 className="mt-2 text-2xl font-bold text-ink">{course?.title || (loading ? 'Loading…' : '')}</h2>
           {course?.description && <p className="mt-1 text-sm text-text-muted">{course.description}</p>}
         </div>

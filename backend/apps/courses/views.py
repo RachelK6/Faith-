@@ -21,6 +21,9 @@ class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     permission_classes = [ReadOnlyOrInstructorAdmin]
 
+    def get_serializer_context(self):
+        return {"request": self.request}
+
     def get_serializer_class(self):
         if self.action == "retrieve":
             return CourseDetailSerializer

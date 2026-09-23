@@ -2,6 +2,8 @@
 Dashboard endpoints — read-only aggregation over data owned by other apps.
 Matches brief sections 13, 14, 15 field-for-field.
 """
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import permissions
@@ -104,7 +106,7 @@ class InstructorDashboardView(APIView):
         # completed activity in the last 7 days. Cheap enough to compute
         # per-course at this stage; revisit with a materialized/cached
         # version once enrollment counts get large (see note in README).
-        cutoff = timezone.now() - timezone.timedelta(days=7)
+        cutoff = timezone.now() - timedelta(days=7)
         falling_behind = []
         for course in my_courses:
             enrolled_students = User.objects.filter(enrollments__course=course)

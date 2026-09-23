@@ -6,9 +6,13 @@ from django.db import models
 def validate_pdf(file):
     if not file.name.lower().endswith(".pdf"):
         raise ValidationError("Only PDF files are allowed.")
-    max_size_mb = 20
+    max_size_mb = 50
     if file.size > max_size_mb * 1024 * 1024:
         raise ValidationError(f"PDF must be smaller than {max_size_mb}MB.")
+
+
+def course_cover_upload_path(instance, filename):
+    return f"course_covers/{instance.id or 'new'}/{filename}"
 
 
 class Course(models.Model):
@@ -16,6 +20,12 @@ class Course(models.Model):
     description = models.TextField(blank=True)
     instructor = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="courses_taught"
+    )
+    thumbnail = models.ImageField(
+        upload_to=course_cover_upload_path,
+        blank=True,
+        null=True,
+        help_text="Course cover image shown on the catalog and dashboard cards.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -62,11 +62,30 @@ class ModuleListSerializer(serializers.ModelSerializer):
 class CourseSerializer(serializers.ModelSerializer):
     instructor_name = serializers.CharField(source="instructor.get_full_name", read_only=True)
     module_count = serializers.IntegerField(source="modules.count", read_only=True)
+    thumbnail_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
-        fields = ["id", "title", "description", "instructor", "instructor_name", "module_count", "created_at"]
-        read_only_fields = ["instructor"]
+        fields = [
+            "id", "title", "description", "instructor", "instructor_name",
+            "module_count", "thumbnail", "thumbnail_url", "created_at"
+        ]
+        read_only_fields = ["instructor", "thumbnail_url"]
+
+    def get_thumbnail_url(self, obj):
+        if not obj.thumbnail:
+            return None
+
+        url = obj.thumbnail.url
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(url)
+
+        if url.startswith("http"):
+            return url
+
+        base_url = "http://localhost:8000"
+        return f"{base_url}{url if url.startswith('/') else '/' + url}"
 
 
 class CourseDetailSerializer(CourseSerializer):
