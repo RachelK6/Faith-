@@ -1,0 +1,81 @@
+{
+  "feature_columns": [
+    "avg_score_last_4_weeks",
+    "score_trend",
+    "score_volatility",
+    "completion_rate_latest",
+    "completion_velocity",
+    "submission_consistency",
+    "missed_deadline_rate",
+    "quiz_improvement_slope",
+    "avg_login_frequency",
+    "avg_active_days",
+    "engagement_dropoff_trend",
+    "content_consumed_pct_avg",
+    "inactivity_streak_days",
+    "retries_avg",
+    "relative_score_vs_class"
+  ],
+  "class_avg_composite_by_course": {
+    "JS-201": 70.48899686520377,
+    "PY-301": 69.41742424242423,
+    "WEB-101": 71.95875
+  },
+  "thresholds": {
+    "medium": 0.21677827209234238,
+    "high": 0.9203571438789367
+  },
+  "cross_validated_metrics": {
+    "accuracy": {
+      "mean": 0.8788888888888888,
+      "std": 0.01333333333333335
+    },
+    "precision": {
+      "mean": 0.872277411102296,
+      "std": 0.056158147856907474
+    },
+    "recall": {
+      "mean": 0.78125,
+      "std": 0.06702378309227255
+    },
+    "f1": {
+      "mean": 0.8202738774004988,
+      "std": 0.023002759753699312
+    },
+    "roc_auc": {
+      "mean": 0.9201778017241379,
+      "std": 0.0218597664916828
+    },
+    "brier": {
+      "mean": 0.09670448154211045,
+      "std": 0.010831166315716751
+    }
+  },
+  "held_out_test_metrics": {
+    "accuracy": 0.8555555555555555,
+    "precision": 0.9130434782608695,
+    "recall": 0.65625,
+    "f1": 0.7636363636363637,
+    "roc_auc": 0.8922413793103448,
+    "brier": 0.11172557191077624
+  },
+  "feature_importances": {
+    "avg_score_last_4_weeks": 0.32663583755493164,
+    "relative_score_vs_class": 0.15907351672649384,
+    "quiz_improvement_slope": 0.059965960681438446,
+    "engagement_dropoff_trend": 0.05326826870441437,
+    "completion_rate_latest": 0.044801704585552216,
+    "content_consumed_pct_avg": 0.04455399140715599,
+    "submission_consistency": 0.04420832172036171,
+    "score_volatility": 0.04205463081598282,
+    "avg_login_frequency": 0.040287215262651443,
+    "score_trend": 0.03882525861263275,
+    "avg_active_days": 0.03847561404109001,
+    "retries_avg": 0.03655852749943733,
+    "completion_velocity": 0.036067768931388855,
+    "missed_deadline_rate": 0.035223327577114105,
+    "inactivity_streak_days": 0.0
+  },
+  "trained_on_rows": 900,
+  "calibrated": true
+}

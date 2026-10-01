@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator
 from django.db import models
+from pathlib import Path
 
 
 def validate_pdf(file):
@@ -9,15 +11,52 @@ def validate_pdf(file):
     max_size_mb = 50
     if file.size > max_size_mb * 1024 * 1024:
         raise ValidationError(f"PDF must be smaller than {max_size_mb}MB.")
+    # A ".pdf" name proves nothing — check the file really starts like a PDF.
+    head = file.read(5)
+    file.seek(0)
+    if head != b"%PDF-":
+        raise ValidationError("This file is not a valid PDF.")
 
 
 def course_cover_upload_path(instance, filename):
     return f"course_covers/{instance.id or 'new'}/{filename}"
 
 
+def lesson_video_upload_path(instance, filename):
+    suffix = Path(filename).suffix.lower()
+    return (
+        f"lesson_videos/course_{instance.module.course_id}/"
+        f"module_{instance.module_id}/lesson_{instance.id or 'new'}{suffix}"
+    )
+
+
+def validate_video_file(file):
+    suffix = Path(file.name).suffix.lower()
+    allowed_signatures = {
+        ".mp4": lambda head: len(head) >= 8 and head[4:8] == b"ftyp",
+        ".mov": lambda head: len(head) >= 8 and head[4:8] == b"ftyp",
+        ".webm": lambda head: head.startswith(b"\x1a\x45\xdf\xa3"),
+        ".ogg": lambda head: head.startswith(b"OggS"),
+    }
+    if suffix not in allowed_signatures:
+        raise ValidationError("Upload an MP4, WebM, OGG, or MOV video.")
+    max_bytes = getattr(settings, "COURSE_VIDEO_MAX_UPLOAD_MB", 500) * 1024 * 1024
+    if file.size > max_bytes:
+        raise ValidationError(f"Video must be smaller than {max_bytes // (1024 * 1024)}MB.")
+    head = file.read(16)
+    file.seek(0)
+    if not allowed_signatures[suffix](head):
+        raise ValidationError("The video contents do not match the file extension.")
+
+
 class Course(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        PUBLISHED = "published", "Published"
+
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PUBLISHED)
     instructor = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="courses_taught"
     )
@@ -54,6 +93,7 @@ class Lesson(models.Model):
     order = models.PositiveIntegerField()
     learning_objectives = models.TextField(blank=True)
     video_url = models.URLField(blank=True, help_text="YouTube/Vimeo/other embeddable video link")
+    video_file = models.FileField(upload_to=lesson_video_upload_path, blank=True, null=True)
     tutorial_content = models.TextField(blank=True)
 
     class Meta:
@@ -116,6 +156,12 @@ class Activity(models.Model):
     instructions = models.TextField(blank=True)
     max_score = models.PositiveIntegerField(default=100)
     max_attempts = models.PositiveIntegerField(default=1)
+    pass_percentage = models.PositiveSmallIntegerField(
+        default=50,
+        validators=[MaxValueValidator(100)],
+        help_text="Minimum grade, as a percentage of max_score, for a graded submission to count as complete "
+                  "(and so unlock the next module). Quizzes use Quiz.pass_mark_percentage instead.",
+    )
     deadline = models.DateTimeField(null=True, blank=True)
     is_required = models.BooleanField(default=True)
 

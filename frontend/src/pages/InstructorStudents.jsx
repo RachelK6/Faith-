@@ -17,16 +17,28 @@ export default function InstructorStudents() {
   const [courses, setCourses] = useState([])
   const [courseId, setCourseId] = useState('')
   const [enrollments, setEnrollments] = useState([])
+  const [allStudents, setAllStudents] = useState([])
   const [error, setError] = useState('')
 
   useEffect(() => {
     api.get('/dashboard/instructor/').then((d) => setCourses(d.my_courses || [])).catch((err) => setError(err.message))
-  }, [])
 
-  useEffect(() => {
-    if (!courseId) { setEnrollments([]); return }
-    api.get(`/enrollments/?course=${courseId}`).then(setEnrollments).catch((err) => setError(err.message))
-  }, [courseId])
+    if (auth?.role === 'admin') {
+      api.get('/dashboard/admin/').then((d) => setAllStudents(d.registered_students || [])).catch((err) => setError(err.message))
+    }
+  }, [auth?.role])
+
+  // A direct user selection (the <select> below), not a prop changing —
+  // reset + fetch belongs in the handler, not in an effect reacting to
+  // state this same component just set.
+  function handleSelectCourse(id) {
+    setCourseId(id)
+    if (!id) {
+      setEnrollments([])
+      return
+    }
+    api.get(`/enrollments/?course=${id}`).then(setEnrollments).catch((err) => setError(err.message))
+  }
 
   return (
     <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Instructor' }}>
@@ -40,17 +52,44 @@ export default function InstructorStudents() {
 
         {error && <div className="rounded-lg border border-line bg-coral-tint px-4 py-3 text-sm text-coral-dim">{error}</div>}
 
-        <div className="rounded-2xl border border-line bg-paper p-6">
-          <label className="mb-1.5 block text-sm font-medium text-ink">Course</label>
-          <select
-            value={courseId}
-            onChange={(e) => setCourseId(e.target.value)}
-            className="w-full max-w-sm rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
-          >
-            <option value="">Select a course…</option>
-            {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-          </select>
-        </div>
+        {!auth || auth.role !== 'admin' ? (
+          <div className="rounded-2xl border border-line bg-paper p-6">
+            <label className="mb-1.5 block text-sm font-medium text-ink">Course</label>
+            <select
+              value={courseId}
+              onChange={(e) => handleSelectCourse(e.target.value)}
+              className="w-full max-w-sm rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
+            >
+              <option value="">Select a course…</option>
+              {courses.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            </select>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-line bg-paper p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-ink">All registered students</p>
+                <p className="text-xs text-text-dim">Includes learners who are not yet enrolled in any course.</p>
+              </div>
+            </div>
+            <div className="divide-y divide-line">
+              {allStudents.map((student) => (
+                <div key={student.id} className="flex flex-col gap-1 py-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-ink">{student.full_name || student.username}</p>
+                    <p className="text-xs text-text-dim">{student.email}</p>
+                  </div>
+                  <p className="text-xs text-text-dim">
+                    {student.enrolled_courses?.length
+                      ? student.enrolled_courses.map((course) => course.title).join(' · ')
+                      : 'Not enrolled yet'}
+                  </p>
+                </div>
+              ))}
+              {allStudents.length === 0 && <p className="py-3 text-sm text-text-muted">No registered students yet.</p>}
+            </div>
+          </div>
+        )}
 
         {courseId && (
           <div className="rounded-2xl border border-line bg-paper p-5">

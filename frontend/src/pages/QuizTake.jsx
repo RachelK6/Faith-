@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { useParams, Link } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, GraduationCap, CheckCircle2, XCircle, Clock } from 'lucide-react'
+import { LayoutDashboard, BookOpen, GraduationCap, CircleCheckBig, CircleX } from 'lucide-react'
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
@@ -49,30 +49,33 @@ export default function QuizTake() {
     <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Student' }}>
       <Helmet><meta name="robots" content="noindex, nofollow" /></Helmet>
 
-      <div className="mx-auto max-w-2xl space-y-6">
+      <div className="mx-auto max-w-3xl space-y-6">
         {error && (
           <div className="rounded-lg border border-line bg-coral-tint px-4 py-3 text-sm text-coral-dim">{error}</div>
         )}
 
         {quiz && !result && (
           <>
-            <div>
-              <h2 className="text-2xl font-bold text-ink">Quiz</h2>
-              <p className="mt-1 flex items-center gap-1.5 text-sm text-text-muted">
-                <Clock size={14} /> {quiz.time_limit_minutes} minutes · Pass mark {quiz.pass_mark_percentage}%
-              </p>
+            <div className="dg-card rounded-3xl p-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">Assessment</p>
+                  <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-900">{quiz.title || 'Quiz'}</h2>
+                </div>
+                <span className="dg-pill">{quiz.time_limit_minutes} min · Pass {quiz.pass_mark_percentage}%</span>
+              </div>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               {quiz.questions.map((q, i) => (
-                <div key={q.id} className="rounded-2xl border border-line bg-paper p-5">
-                  <p className="font-medium text-ink">{i + 1}. {q.text}</p>
-                  <div className="mt-3 space-y-2">
+                <div key={q.id} className="dg-card rounded-3xl p-5">
+                  <p className="font-semibold text-slate-900">{i + 1}. {q.text}</p>
+                  <div className="mt-4 space-y-2">
                     {q.choices.map((choice, idx) => (
                       <label
                         key={idx}
-                        className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm ${
-                          answers[q.id] === idx ? 'border-coral bg-coral-tint text-coral-dim' : 'border-line text-ink hover:border-text-dim'
+                        className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm transition ${
+                          answers[q.id] === idx ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 text-slate-700 hover:border-blue-200 hover:bg-slate-50'
                         }`}
                       >
                         <input
@@ -80,7 +83,7 @@ export default function QuizTake() {
                           name={`question-${q.id}`}
                           checked={answers[q.id] === idx}
                           onChange={() => selectAnswer(q.id, idx)}
-                          className="accent-coral"
+                          className="accent-blue-600"
                         />
                         {choice.text ?? choice}
                       </label>
@@ -91,7 +94,7 @@ export default function QuizTake() {
 
               <button
                 disabled={!allAnswered || busy}
-                className="w-full rounded-md bg-coral py-2.5 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60"
+                className="dg-btn w-full bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-60"
               >
                 {busy ? 'Submitting…' : 'Submit quiz'}
               </button>
@@ -100,19 +103,19 @@ export default function QuizTake() {
         )}
 
         {result && (
-          <div className="rounded-2xl border border-line bg-paper p-8 text-center">
+          <div className="dg-card rounded-3xl p-8 text-center">
             {result.passed ? (
-              <CheckCircle2 size={40} className="mx-auto text-mint" />
+              <CircleCheckBig size={40} className="mx-auto text-emerald-500" />
             ) : (
-              <XCircle size={40} className="mx-auto text-coral" />
+              <CircleX size={40} className="mx-auto text-rose-500" />
             )}
-            <h2 className="mt-3 text-xl font-bold text-ink">{result.passed ? 'Passed!' : 'Not quite — try again'}</h2>
-            <p className="mt-2 text-sm text-text-muted">
+            <h2 className="mt-3 text-2xl font-black tracking-tight text-slate-900">{result.passed ? 'Passed!' : 'Not quite — try again'}</h2>
+            <p className="mt-2 text-sm text-slate-600">
               Score: {result.score} / {result.total_marks} ({result.percentage}%)
             </p>
             <Link
               to="/dashboard/student/courses"
-              className="mt-5 inline-block rounded-md bg-coral px-5 py-2 text-sm font-medium text-white hover:bg-coral-dim"
+              className="dg-btn mt-5 bg-blue-600 text-white hover:bg-blue-500"
             >
               Back to courses
             </Link>

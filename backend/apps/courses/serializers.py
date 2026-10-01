@@ -1,47 +1,103 @@
+from django.urls import reverse
 from rest_framework import serializers
 
-from .models import Course, Module, Lesson, Activity, LessonAttachment
+from .models import Course, Module, Lesson, Activity, LessonAttachment, validate_video_file
+from .validators import validate_video_url
+
+ACTIVITY_PUBLIC_FIELDS = [
+    "id", "lesson", "activity_type", "title", "instructions",
+    "max_score", "max_attempts", "pass_percentage", "deadline", "is_required",
+    "starter_code", "quiz_id",
+]
 
 
 class LessonAttachmentSerializer(serializers.ModelSerializer):
     uploaded_by_name = serializers.CharField(source="uploaded_by.get_full_name", read_only=True)
+    # The raw media URL is never exposed: files are served only through an
+    # authenticated endpoint that re-checks enrollment and module locking.
+    download_url = serializers.SerializerMethodField()
 
     class Meta:
         model = LessonAttachment
-        fields = ["id", "lesson", "title", "file", "uploaded_by_name", "uploaded_at"]
-        read_only_fields = ["uploaded_by_name", "uploaded_at"]
+        fields = ["id", "lesson", "title", "file", "download_url", "uploaded_by_name", "uploaded_at"]
+        read_only_fields = ["uploaded_by_name", "uploaded_at", "download_url"]
+        extra_kwargs = {"file": {"write_only": True}}
+
+    def get_download_url(self, obj):
+        return reverse("lesson-attachment-download", args=[obj.pk])
 
 
-class ActivitySerializer(serializers.ModelSerializer):
+class _ActivityBase(serializers.ModelSerializer):
     quiz_id = serializers.SerializerMethodField()
 
-    class Meta:
-        model = Activity
-        fields = [
-            "id", "lesson", "activity_type", "title", "instructions",
-            "max_score", "max_attempts", "deadline", "is_required",
-            "starter_code", "test_cases", "quiz_id",
-        ]
-
     def get_quiz_id(self, obj):
-        # Activity -> Quiz is a one-to-one (see quizzes/models.py); only
-        # activity_type='quiz' rows actually have one. Avoids a second
-        # round trip from the frontend just to find "the quiz for this
-        # activity" when rendering a lesson page.
         quiz = getattr(obj, "quiz", None)
         return quiz.id if quiz else None
+
+    def validate_max_attempts(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Must allow at least one attempt.")
+        return value
+
+    def validate_max_score(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Must be at least 1.")
+        return value
+
+
+class ActivitySerializer(_ActivityBase):
+    """Staff view: includes the answer key (test_cases)."""
+    class Meta:
+        model = Activity
+        fields = ACTIVITY_PUBLIC_FIELDS + ["test_cases"]
+
+
+class ActivityStudentSerializer(_ActivityBase):
+    """Student view: `test_cases` (expected outputs) are never sent."""
+    class Meta:
+        model = Activity
+        fields = ACTIVITY_PUBLIC_FIELDS
+        read_only_fields = fields
 
 
 class LessonSerializer(serializers.ModelSerializer):
     activities = ActivitySerializer(many=True, read_only=True)
     attachments = LessonAttachmentSerializer(many=True, read_only=True)
+    video_url = serializers.CharField(required=False, allow_blank=True, validators=[validate_video_url])
+    video_file = serializers.FileField(required=False, allow_null=True, write_only=True)
+    video_file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Lesson
         fields = [
             "id", "module", "title", "order", "learning_objectives",
-            "video_url", "tutorial_content", "activities", "attachments",
+            "video_url", "video_file", "video_file_url", "tutorial_content", "activities", "attachments",
         ]
+
+    def get_video_file_url(self, obj):
+        if not obj.video_file:
+            return None
+        return reverse("lesson-video", args=[obj.pk])
+
+    def validate_video_file(self, value):
+        validate_video_file(value)
+        return value
+
+    def validate(self, attrs):
+        video_url = attrs.get("video_url", self.instance.video_url if self.instance else "")
+        video_file = attrs.get("video_file", self.instance.video_file if self.instance else None)
+        if video_url and video_file:
+            raise serializers.ValidationError({
+                "video_url": "Choose a video link or an uploaded video, not both."
+            })
+        return attrs
+
+
+class LessonStudentSerializer(LessonSerializer):
+    activities = ActivityStudentSerializer(many=True, read_only=True)
+
+    class Meta(LessonSerializer.Meta):
+        read_only_fields = LessonSerializer.Meta.fields
 
 
 class ModuleSerializer(serializers.ModelSerializer):
@@ -53,7 +109,8 @@ class ModuleSerializer(serializers.ModelSerializer):
 
 
 class ModuleListSerializer(serializers.ModelSerializer):
-    """Lighter version for list views — no nested lessons."""
+    """Titles/order only — no lesson content. This is all a student gets from
+    /modules/ (lesson content comes from /lessons/, which enforces locking)."""
     class Meta:
         model = Module
         fields = ["id", "course", "title", "order"]
@@ -68,9 +125,14 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             "id", "title", "description", "instructor", "instructor_name",
-            "module_count", "thumbnail", "thumbnail_url", "created_at"
+            "module_count", "thumbnail", "thumbnail_url", "status", "created_at"
         ]
-        read_only_fields = ["instructor", "thumbnail_url"]
+        read_only_fields = ["instructor", "thumbnail_url", "status"]
+
+    def validate_thumbnail(self, value):
+        if value is not None and value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Cover image must be smaller than 5MB.")
+        return value
 
     def get_thumbnail_url(self, obj):
         if not obj.thumbnail:

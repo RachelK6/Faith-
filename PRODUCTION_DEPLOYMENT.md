@@ -1,6 +1,6 @@
 # Production deployment
 
-This project can use a real Microsoft SQL Server database, but production
+This project uses Microsoft SQL Server, and production
 security and 3,000-user capacity come from the deployment architecture as
 well as the application code. Do not run Django `runserver` in production.
 
@@ -30,7 +30,6 @@ DJANGO_DEBUG=False
 DJANGO_SECRET_KEY=<long random secret from a secret manager>
 DJANGO_ALLOWED_HOSTS=api.example.com
 CORS_ALLOWED_ORIGINS=https://app.example.com
-DB_ENGINE=mssql
 MSSQL_DB_NAME=optimum_erp_lms
 MSSQL_DB_USER=<least-privilege SQL user>
 MSSQL_DB_PASSWORD=<secret>

@@ -1,127 +1,311 @@
-from rest_framework import viewsets
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.parsers import MultiPartParser, FormParser
+import mimetypes
 
-from apps.accounts.permissions import ReadOnlyOrInstructorAdmin
-from apps.progress.services import is_module_unlocked
-from .models import Course, Module, Lesson, Activity, LessonAttachment
-from .serializers import (
-    CourseSerializer, CourseDetailSerializer,
-    ModuleSerializer, LessonSerializer, ActivitySerializer,
-    LessonAttachmentSerializer,
+from django.db import transaction
+from django.db.models import Max, Q
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.response import Response
+
+from apps.accounts.access import (
+    STUDENT, require_teaches, role_of, scope_by_course, scope_unlocked,
 )
+from apps.accounts.permissions import ReadOnlyOrInstructorAdmin
+from .models import Activity, Course, Lesson, LessonAttachment, Module
+from .serializers import (
+    ActivitySerializer, ActivityStudentSerializer, CourseDetailSerializer, CourseSerializer,
+    LessonAttachmentSerializer, LessonSerializer, LessonStudentSerializer,
+    ModuleListSerializer, ModuleSerializer,
+)
+
+
+def _is_student(request):
+    return role_of(request.user) == STUDENT
 
 
 class CourseViewSet(viewsets.ModelViewSet):
     """
-    Any authenticated user can list/view courses.
-    Only instructors/admins can create/edit/delete.
-    An instructor is auto-assigned as the owner of a course they create.
+    Catalog: every authenticated user can list/retrieve course *metadata*
+    (title, description, instructor, module titles) so students can browse and
+    enroll. Writes require owning the course (or being an admin) — being "an
+    instructor" is not enough to edit somebody else's course.
     """
-    queryset = Course.objects.all()
+    queryset = Course.objects.select_related("instructor").prefetch_related("modules")
     permission_classes = [ReadOnlyOrInstructorAdmin]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_serializer_context(self):
         return {"request": self.request}
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        role = role_of(self.request.user)
+        if role == STUDENT:
+            return qs.filter(status=Course.Status.PUBLISHED)
+        if role != "admin":
+            return qs.filter(Q(status=Course.Status.PUBLISHED) | Q(instructor=self.request.user))
+        return qs
+
     def get_serializer_class(self):
-        if self.action == "retrieve":
-            return CourseDetailSerializer
-        return CourseSerializer
+        return CourseDetailSerializer if self.action == "retrieve" else CourseSerializer
 
     def perform_create(self, serializer):
-        serializer.save(instructor=self.request.user)
+        status_value = self.request.data.get("status", Course.Status.PUBLISHED)
+        if status_value not in Course.Status.values:
+            raise ValidationError({"status": "Use 'draft' or 'published'."})
+        serializer.save(instructor=self.request.user, status=status_value)
+
+    def perform_update(self, serializer):
+        require_teaches(self.request.user, serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require_teaches(self.request.user, instance)
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def save_draft(self, request, pk=None):
+        course = self.get_object()
+        require_teaches(request.user, course)
+        course.status = Course.Status.DRAFT
+        course.save(update_fields=["status"])
+        return Response(CourseSerializer(course, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        course = self.get_object()
+        require_teaches(request.user, course)
+        modules = list(course.modules.prefetch_related("lessons__activities__quiz__questions").order_by("order"))
+        if not modules:
+            raise ValidationError({"course": "Add at least one module before publishing."})
+        empty_modules = [module.title for module in modules if not module.lessons.all()]
+        if empty_modules:
+            raise ValidationError({"modules": "Every module needs at least one lesson before publishing."})
+        incomplete_quizzes = [
+            activity.title
+            for module in modules
+            for lesson in module.lessons.all()
+            for activity in lesson.activities.all()
+            if activity.activity_type == "quiz"
+            and (not hasattr(activity, "quiz") or not activity.quiz.questions.exists())
+        ]
+        if incomplete_quizzes:
+            raise ValidationError({"quizzes": "Add at least one question to each quiz before publishing: " + ", ".join(incomplete_quizzes)})
+        course.status = Course.Status.PUBLISHED
+        course.save(update_fields=["status"])
+        return Response(CourseSerializer(course, context=self.get_serializer_context()).data)
 
 
 class ModuleViewSet(viewsets.ModelViewSet):
-    """Module titles/order are visible even when locked (a student needs
-    to see 'React — locked' in the sidebar) — only the actual lesson
-    content inside a locked module is withheld, enforced below."""
-    queryset = Module.objects.all()
-    serializer_class = ModuleSerializer
+    """Students: titles/order of modules in courses they're enrolled in
+    (no lesson content). Instructors: modules of courses they teach."""
+    queryset = Module.objects.select_related("course")
     permission_classes = [ReadOnlyOrInstructorAdmin]
 
+    def get_serializer_class(self):
+        return ModuleListSerializer if _is_student(self.request) else ModuleSerializer
+
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = scope_by_course(super().get_queryset(), self.request.user, "course")
         course_id = self.request.query_params.get("course")
         if course_id:
             qs = qs.filter(course_id=course_id)
         return qs
 
+    def perform_create(self, serializer):
+        require_teaches(self.request.user, serializer.validated_data["course"])
+        serializer.save()
+
+    def perform_update(self, serializer):
+        require_teaches(self.request.user, serializer.instance.course)
+        if "course" in serializer.validated_data:  # don't allow moving into someone else's course
+            require_teaches(self.request.user, serializer.validated_data["course"])
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require_teaches(self.request.user, instance.course)
+        instance.delete()
+
+    @action(detail=False, methods=["post"])
+    def reorder(self, request):
+        course_id = request.data.get("course")
+        ordered_ids = request.data.get("module_ids")
+        try:
+            course = Course.objects.get(pk=course_id)
+        except (Course.DoesNotExist, TypeError, ValueError):
+            raise NotFound("Course not found.")
+        require_teaches(request.user, course)
+        modules = list(Module.objects.select_for_update().filter(course=course).order_by("order"))
+        self._validate_order(ordered_ids, modules, "module_ids")
+        if ordered_ids:
+            offset = (max(module.order for module in modules) + len(modules) + 1)
+            for module in modules:
+                module.order += offset
+            Module.objects.bulk_update(modules, ["order"])
+            by_id = {module.id: module for module in modules}
+            for index, module_id in enumerate(ordered_ids, start=1):
+                by_id[module_id].order = index
+            Module.objects.bulk_update(modules, ["order"])
+        return Response(ModuleListSerializer(Module.objects.filter(course=course).order_by("order"), many=True).data)
+
+    @action(detail=True, methods=["post"], url_path="reorder-lessons")
+    def reorder_lessons(self, request, pk=None):
+        module = self.get_object()
+        require_teaches(request.user, module.course)
+        lessons = list(Lesson.objects.select_for_update().filter(module=module).order_by("order"))
+        ordered_ids = request.data.get("lesson_ids")
+        self._validate_order(ordered_ids, lessons, "lesson_ids")
+        if ordered_ids:
+            offset = max(lesson.order for lesson in lessons) + len(lessons) + 1
+            for lesson in lessons:
+                lesson.order += offset
+            Lesson.objects.bulk_update(lessons, ["order"])
+            by_id = {lesson.id: lesson for lesson in lessons}
+            for index, lesson_id in enumerate(ordered_ids, start=1):
+                by_id[lesson_id].order = index
+            Lesson.objects.bulk_update(lessons, ["order"])
+        return Response(LessonSerializer(Lesson.objects.filter(module=module).order_by("order"), many=True).data)
+
+    @staticmethod
+    def _validate_order(ordered_ids, objects, field):
+        if not isinstance(ordered_ids, list) or len(ordered_ids) != len(objects):
+            raise ValidationError({field: "Provide every item in this course/module exactly once."})
+        existing_ids = {obj.id for obj in objects}
+        if len(set(ordered_ids)) != len(ordered_ids) or set(ordered_ids) != existing_ids:
+            raise ValidationError({field: "IDs must match the existing items exactly, without duplicates."})
+
 
 class LessonViewSet(viewsets.ModelViewSet):
     """
-    SECURITY: this is the actual enforcement point for module locking on
-    the read side. Per brief section 4 — "students should not be able to
-    bypass restrictions by manually changing URLs or making direct API
-    requests" — a student hitting GET /api/lessons/<id>/ or
-    /api/lessons/?module=<id> directly for a module they haven't unlocked
-    must not get the content back, regardless of what the frontend UI
-    shows or hides. Instructors/admins always see everything (they need
-    to edit locked-for-students content).
+    SECURITY: the enforcement point for lesson content. A student sees only
+    lessons in courses they're ENROLLED in whose module is UNLOCKED; anything
+    else 404s (doesn't confirm the ID exists). Instructors see only courses
+    they teach.
     """
-    queryset = Lesson.objects.all()
-    serializer_class = LessonSerializer
+    queryset = Lesson.objects.select_related("module__course")
     permission_classes = [ReadOnlyOrInstructorAdmin]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def get_serializer_class(self):
+        return LessonStudentSerializer if _is_student(self.request) else LessonSerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
         module_id = self.request.query_params.get("module")
         if module_id:
             qs = qs.filter(module_id=module_id)
+        return scope_unlocked(qs, self.request.user, "module", "module__course")
 
-        user = self.request.user
-        if user.role == "student":
-            unlocked_module_ids = [
-                m.id for m in Module.objects.filter(
-                    id__in=qs.values_list("module_id", flat=True).distinct()
-                )
-                if is_module_unlocked(user, m)
-            ]
-            qs = qs.filter(module_id__in=unlocked_module_ids)
-        return qs
+    def perform_create(self, serializer):
+        require_teaches(self.request.user, serializer.validated_data["module"].course)
+        serializer.save()
 
-    def retrieve(self, request, *args, **kwargs):
-        # get_queryset already filters locked content out for students,
-        # so a locked lesson 404s rather than leaking a 403 (doesn't
-        # confirm the lesson exists at all to someone probing IDs).
-        return super().retrieve(request, *args, **kwargs)
+    def perform_update(self, serializer):
+        require_teaches(self.request.user, serializer.instance.module.course)
+        if "module" in serializer.validated_data:
+            require_teaches(self.request.user, serializer.validated_data["module"].course)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require_teaches(self.request.user, instance.module.course)
+        instance.delete()
+
+    @action(detail=True, methods=["get"], url_path="video")
+    def video(self, request, pk=None):
+        lesson = self.get_object()
+        if not lesson.video_file:
+            raise NotFound("This lesson does not have an uploaded video.")
+        video = lesson.video_file.open("rb")
+        size = lesson.video_file.size
+        start, end = 0, size - 1
+        status_code = 200
+        range_header = request.headers.get("Range")
+        if range_header:
+            try:
+                unit, requested = range_header.split("=", 1)
+                if unit != "bytes" or "," in requested:
+                    raise ValueError
+                first, _, last = requested.partition("-")
+                if not first:
+                    length = int(last)
+                    start = max(0, size - length)
+                else:
+                    start = int(first)
+                    if last:
+                        end = min(int(last), end)
+                if start < 0 or start >= size or end < start:
+                    raise ValueError
+                status_code = 206
+            except (ValueError, TypeError):
+                video.close()
+                response = HttpResponse(status=416)
+                response["Content-Range"] = f"bytes */{size}"
+                return response
+
+        video.seek(start)
+        remaining = end - start + 1
+
+        def chunks():
+            try:
+                while remaining_bytes[0] > 0:
+                    chunk = video.read(min(1024 * 1024, remaining_bytes[0]))
+                    if not chunk:
+                        break
+                    remaining_bytes[0] -= len(chunk)
+                    yield chunk
+            finally:
+                video.close()
+
+        remaining_bytes = [remaining]
+        content_type = mimetypes.guess_type(lesson.video_file.name)[0] or "application/octet-stream"
+        response = StreamingHttpResponse(chunks(), status=status_code, content_type=content_type)
+        response["Accept-Ranges"] = "bytes"
+        response["Content-Length"] = str(remaining)
+        response["Content-Disposition"] = "inline"
+        response["X-Content-Type-Options"] = "nosniff"
+        if status_code == 206:
+            response["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return response
 
 
 class ActivityViewSet(viewsets.ModelViewSet):
-    """Same enforcement as LessonViewSet, one level down the tree."""
-    queryset = Activity.objects.all()
-    serializer_class = ActivitySerializer
+    queryset = Activity.objects.select_related("lesson__module__course")
     permission_classes = [ReadOnlyOrInstructorAdmin]
+
+    def get_serializer_class(self):
+        return ActivityStudentSerializer if _is_student(self.request) else ActivitySerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
         lesson_id = self.request.query_params.get("lesson")
         if lesson_id:
             qs = qs.filter(lesson_id=lesson_id)
+        return scope_unlocked(qs, self.request.user, "lesson__module", "lesson__module__course")
 
-        user = self.request.user
-        if user.role == "student":
-            module_ids = qs.values_list("lesson__module_id", flat=True).distinct()
-            unlocked_module_ids = [
-                m.id for m in Module.objects.filter(id__in=module_ids)
-                if is_module_unlocked(user, m)
-            ]
-            qs = qs.filter(lesson__module_id__in=unlocked_module_ids)
-        return qs
+    def perform_create(self, serializer):
+        require_teaches(self.request.user, serializer.validated_data["lesson"].module.course)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        require_teaches(self.request.user, serializer.instance.lesson.module.course)
+        if "lesson" in serializer.validated_data:
+            require_teaches(self.request.user, serializer.validated_data["lesson"].module.course)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require_teaches(self.request.user, instance.lesson.module.course)
+        instance.delete()
 
 
 class LessonAttachmentViewSet(viewsets.ModelViewSet):
     """
-    PDFs/handouts attached to a lesson.
-    - GET: any authenticated user, but students only see attachments for
-      lessons in modules they've unlocked (same rule as the lesson/activity
-      content itself — a PDF is course content too, and section 4 of the
-      brief applies to it exactly as much as videos or text).
-    - POST/PATCH/DELETE: instructor/admin only. Upload takes multipart
-      form data: fields `lesson` (id), `title`, `file` (the PDF).
+    PDFs/handouts attached to a lesson (same visibility as the lesson).
+    Files are downloaded via GET /lesson-attachments/<id>/download/ — an
+    authenticated endpoint — never via a public /media/ URL.
     """
-    queryset = LessonAttachment.objects.all()
+    queryset = LessonAttachment.objects.select_related("lesson__module__course", "uploaded_by")
     serializer_class = LessonAttachmentSerializer
     permission_classes = [ReadOnlyOrInstructorAdmin]
     parser_classes = [MultiPartParser, FormParser]
@@ -131,16 +315,29 @@ class LessonAttachmentViewSet(viewsets.ModelViewSet):
         lesson_id = self.request.query_params.get("lesson")
         if lesson_id:
             qs = qs.filter(lesson_id=lesson_id)
-
-        user = self.request.user
-        if user.role == "student":
-            module_ids = qs.values_list("lesson__module_id", flat=True).distinct()
-            unlocked_module_ids = [
-                m.id for m in Module.objects.filter(id__in=module_ids)
-                if is_module_unlocked(user, m)
-            ]
-            qs = qs.filter(lesson__module_id__in=unlocked_module_ids)
-        return qs
+        return scope_unlocked(qs, self.request.user, "lesson__module", "lesson__module__course")
 
     def perform_create(self, serializer):
+        require_teaches(self.request.user, serializer.validated_data["lesson"].module.course)
         serializer.save(uploaded_by=self.request.user)
+
+    def perform_update(self, serializer):
+        require_teaches(self.request.user, serializer.instance.lesson.module.course)
+        if "lesson" in serializer.validated_data:
+            require_teaches(self.request.user, serializer.validated_data["lesson"].module.course)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        require_teaches(self.request.user, instance.lesson.module.course)
+        instance.delete()
+
+    @action(detail=True, methods=["get"], parser_classes=[JSONParser])
+    def download(self, request, pk=None):
+        attachment = self.get_object()  # goes through get_queryset -> enrollment + locking
+        if not attachment.file:
+            raise NotFound()
+        response = FileResponse(attachment.file.open("rb"), as_attachment=False,
+                                filename=attachment.file.name.rsplit("/", 1)[-1],
+                                content_type="application/pdf")
+        response["X-Content-Type-Options"] = "nosniff"
+        return response

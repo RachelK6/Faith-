@@ -1,192 +1,328 @@
+"""The learning loop, end to end through the REST API:
+
+  instructor builds course -> student enrolls -> module 2 locked -> student
+  submits (attempt limit) -> instructor grades (pass mark) -> completion ->
+  module 2 unlocks -> regrade below pass -> locks again.
+
+Plus video-progress accounting (seek / fast-forward / rewatch / resume).
 """
-End-to-end integration test for the full learning flow, run through the
-real REST API (not just calling service functions directly) so it
-exercises the views, serializers, and permission classes exactly as a
-real client would. This is the project's first real test — see the
-project README for the broader note that test coverage is still thin
-everywhere else; this file is a starting point, not the finish line.
+from datetime import datetime, timedelta, timezone as dt_tz
+from types import SimpleNamespace
 
-Run with:  python manage.py test apps.progress
-"""
-import io
-from unittest.mock import patch
+from django.core.cache import cache
+from django.test import SimpleTestCase, override_settings
+from rest_framework.test import APIClient, APITestCase
 
-from django.contrib.auth import get_user_model
-from django.test import TestCase
-
-from apps.quizzes.models import Question
-
-User = get_user_model()
+from apps.accounts.models import User
+from apps.accounts.testing import PASSWORD, World, client_for, make_user
+from apps.courses.models import Activity, Course, Lesson, Module
+from apps.progress import video
+from apps.progress.models import ActivityCompletion, VideoProgress
 
 
-class FullLearningFlowTest(TestCase):
+def login(email):
+    """Real JWT login (not force_authenticate) so the auth path is exercised too."""
+    c = APIClient()
+    r = c.post("/api/auth/login/", {"email": email, "password": PASSWORD}, format="json")
+    assert r.status_code == 200, r.data
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {r.data['access']}")
+    return c
+
+
+class LearningLoopTests(APITestCase):
     def setUp(self):
-        self.instructor = User.objects.create_user(
-            username="inst1", email="instructor@test.com", password="Pass1234!", role="instructor"
-        )
-        self.student = User.objects.create_user(
-            username="stud1", email="student@test.com", password="Pass1234!", role="student"
-        )
-        self.instructor_token = self._login("instructor@test.com", "Pass1234!")
-        self.student_token = self._login("student@test.com", "Pass1234!")
+        cache.clear()
+        make_user("teacher", "instructor")
+        make_user("learner", "student")
+        self.teacher, self.learner = login("teacher@example.com"), login("learner@example.com")
 
-    def _login(self, email, password):
-        resp = self.client.post(
-            "/api/auth/login/", {"email": email, "password": password}, content_type="application/json"
-        )
-        self.assertEqual(resp.status_code, 200)
-        return resp.json()["access"]
+    def build_course(self):
+        t = self.teacher
+        self.course_id = t.post("/api/courses/", {"title": "Python", "description": "d"}, format="json").data["id"]
+        self.mod1 = t.post("/api/modules/", {"course": self.course_id, "title": "Basics", "order": 1}, format="json").data["id"]
+        self.mod2 = t.post("/api/modules/", {"course": self.course_id, "title": "Functions", "order": 2}, format="json").data["id"]
+        self.lesson1 = t.post("/api/lessons/", {"module": self.mod1, "title": "Variables", "order": 1,
+                                                "video_url": "https://youtu.be/dQw4w9WgXcQ"}, format="json").data["id"]
+        self.lesson2 = t.post("/api/lessons/", {"module": self.mod2, "title": "def", "order": 1}, format="json").data["id"]
+        r = t.post("/api/activities/", {"lesson": self.lesson1, "activity_type": "assignment", "title": "Essay",
+                                        "max_score": 100, "max_attempts": 2, "pass_percentage": 50, "is_required": True}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.act = r.data["id"]
 
-    def _auth(self, token):
-        return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+    def module_statuses(self):
+        return {m["module_id"]: m["status"] for m in self.learner.get(f"/api/progress/course/{self.course_id}/").data}
 
-    def test_full_flow(self):
-        # --- Instructor builds a course with 2 modules ---
-        resp = self.client.post(
-            "/api/courses/", {"title": "Intro to Python", "description": "A course"},
-            content_type="application/json", **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        course_id = resp.json()["id"]
+    def submit(self, text="answer"):
+        return self.learner.post("/api/submissions/", {"activity": self.act, "content": text}, format="json")
 
-        module1_id = self.client.post(
-            "/api/modules/", {"course": course_id, "title": "Basics", "order": 1},
-            content_type="application/json", **self._auth(self.instructor_token),
-        ).json()["id"]
-        module2_id = self.client.post(
-            "/api/modules/", {"course": course_id, "title": "Functions", "order": 2},
-            content_type="application/json", **self._auth(self.instructor_token),
-        ).json()["id"]
+    def grade(self, sub_id, grade):
+        return self.teacher.patch(f"/api/submissions/{sub_id}/grade/", {"grade": grade, "feedback": "ok"}, format="json")
 
-        resp = self.client.post(
-            "/api/lessons/", {
-                "module": module1_id, "title": "Variables", "order": 1,
-                "video_url": "https://youtube.com/watch?v=abc123",
-                "tutorial_content": "Variables store values.",
-            }, content_type="application/json", **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        lesson_id = resp.json()["id"]
-        self.assertEqual(resp.json()["video_url"], "https://youtube.com/watch?v=abc123")
+    def test_full_learning_loop(self):
+        self.build_course()
+        # enroll -> module 1 active, module 2 locked
+        self.assertEqual(self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json").status_code, 201)
+        self.assertEqual(self.module_statuses(), {self.mod1: "active", self.mod2: "locked"})
+        self.assertEqual(self.learner.get(f"/api/lessons/{self.lesson2}/").status_code, 404)
+        self.assertEqual(self.learner.get(f"/api/progress/can-access/{self.mod2}/").data["unlocked"], False)
 
-        # --- PDF attachment ---
-        fake_pdf = io.BytesIO(b"%PDF-1.4 fake pdf content\n%%EOF")
-        fake_pdf.name = "handout.pdf"
-        resp = self.client.post(
-            "/api/lesson-attachments/", {"lesson": lesson_id, "title": "Week 1 handout", "file": fake_pdf},
-            **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        self.assertTrue(resp.json()["file"])
+        # two attempts allowed, the third refused
+        first, second = self.submit("first try"), self.submit("second try")
+        self.assertEqual((first.status_code, first.data["attempt_number"]), (201, 1))
+        self.assertEqual((second.status_code, second.data["attempt_number"]), (201, 2))
+        third = self.submit("third try")
+        self.assertEqual(third.status_code, 400)
+        self.assertIn("Maximum attempts", str(third.data))
 
-        # --- Required exercise activity ---
-        resp = self.client.post(
-            "/api/activities/", {
-                "lesson": lesson_id, "activity_type": "exercise", "title": "Sum two numbers",
-                "instructions": "Write add(a, b)", "max_score": 100, "max_attempts": 2,
-                "is_required": True, "starter_code": "function add(a, b) {}",
-                "test_cases": [{"input": [1, 2], "expected_output": 3}],
-            }, content_type="application/json", **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        activity_id = resp.json()["id"]
+        # a failing grade does NOT complete the activity or unlock module 2
+        r = self.grade(first.data["id"], 30)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data["activity_completed"])
+        self.assertEqual(self.module_statuses(), {self.mod1: "active", self.mod2: "locked"})
+        self.assertEqual(self.learner.get(f"/api/lessons/{self.lesson2}/").status_code, 404)
 
-        # --- Student enrolls ---
-        resp = self.client.post(
-            "/api/enrollments/", {"course": course_id},
-            content_type="application/json", **self._auth(self.student_token),
-        )
-        self.assertEqual(resp.status_code, 201)
+        # a passing grade completes it and unlocks module 2
+        r = self.grade(second.data["id"], 80)
+        self.assertTrue(r.data["activity_completed"])
+        self.assertEqual(ActivityCompletion.objects.get().score, 80)
+        self.assertEqual(self.module_statuses()[self.mod1], "done")
+        self.assertNotEqual(self.module_statuses()[self.mod2], "locked")
+        self.assertEqual(self.learner.get(f"/api/lessons/{self.lesson2}/").status_code, 200)
+        self.assertEqual(self.learner.get(f"/api/progress/can-access/{self.mod2}/").data["unlocked"], True)
 
-        # --- Module locking: module 2 locked, module 1 active ---
-        resp = self.client.get(f"/api/progress/course/{course_id}/", **self._auth(self.student_token))
-        statuses = {m["module_id"]: m["status"] for m in resp.json()}
-        self.assertEqual(statuses[module1_id], "active")
-        self.assertEqual(statuses[module2_id], "locked")
+        # student dashboard reflects it
+        dash = self.learner.get("/api/dashboard/student/").data
+        self.assertEqual(dash["enrolled_courses"][0]["course_id"], self.course_id)
+        self.assertEqual(dash["recent_grades"][0]["grade"], 80)
 
-        # --- Run tests against the sandbox (mocked — no real sandbox in CI) ---
-        with patch("apps.execution.views.requests.post") as mock_post:
-            mock_post.return_value.status_code = 200
-            mock_post.return_value.json.return_value = {"tests_passed": 1, "tests_failed": 0, "score": 100}
-            resp = self.client.post(
-                "/api/execute/test/",
-                {"language": "javascript", "code": "function add(a,b){return a+b}", "activity_id": activity_id},
-                content_type="application/json", **self._auth(self.student_token),
-            )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            mock_post.call_args.kwargs["json"]["test_cases"],
-            [{"input": [1, 2], "expected_output": 3}],
-        )
+        # a later, lower grade on ANOTHER submission doesn't undo an existing pass
+        self.grade(first.data["id"], 10)
+        self.assertEqual(self.module_statuses()[self.mod1], "done")
 
-        # --- Submit + attempt limit (max_attempts=2) ---
-        resp = self.client.post(
-            "/api/submissions/", {"activity": activity_id, "content": "function add(a,b){return a+b}"},
-            content_type="application/json", **self._auth(self.student_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        submission_id = resp.json()["id"]
-        self.assertEqual(resp.json()["attempt_number"], 1)
+        # but downgrading the only passing submission re-locks module 2
+        r = self.grade(second.data["id"], 20)
+        self.assertFalse(r.data["activity_completed"])
+        self.assertFalse(ActivityCompletion.objects.exists())
+        self.assertEqual(self.module_statuses(), {self.mod1: "active", self.mod2: "locked"})
 
-        self.client.post(
-            "/api/submissions/", {"activity": activity_id, "content": "v2"},
-            content_type="application/json", **self._auth(self.student_token),
-        )
-        resp = self.client.post(
-            "/api/submissions/", {"activity": activity_id, "content": "v3"},
-            content_type="application/json", **self._auth(self.student_token),
-        )
-        self.assertEqual(resp.status_code, 400)  # 3rd attempt blocked
+    def test_pass_boundary_is_inclusive(self):
+        self.build_course()
+        self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json")
+        sub = self.submit()
+        self.assertFalse(self.grade(sub.data["id"], 49.9).data["activity_completed"])
+        self.assertTrue(self.grade(sub.data["id"], 50).data["activity_completed"])
 
-        # --- Grade it -> module 1 completes -> module 2 unlocks ---
-        resp = self.client.patch(
-            f"/api/submissions/{submission_id}/grade/", {"grade": 100, "feedback": "Nicely done."},
-            content_type="application/json", **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 200)
+    def test_grade_bounds(self):
+        self.build_course()
+        self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json")
+        sid = self.submit().data["id"]
+        for bad in (101, -1, "abc", None):
+            self.assertEqual(self.grade(sid, bad).status_code, 400, bad)
+        self.assertEqual(self.grade(sid, 100).status_code, 200)
 
-        resp = self.client.get(f"/api/progress/course/{course_id}/", **self._auth(self.student_token))
-        statuses = {m["module_id"]: m["status"] for m in resp.json()}
-        self.assertEqual(statuses[module1_id], "done")
-        # Module 2 has no activities yet, so it's trivially complete once
-        # unlocked (see progress/services.py) — the real assertion here
-        # is just that it's no longer locked.
-        self.assertNotEqual(statuses[module2_id], "locked")
+    def test_module_needs_every_required_activity(self):
+        self.build_course()
+        self.teacher.post("/api/activities/", {"lesson": self.lesson1, "activity_type": "assignment", "title": "Second",
+                                               "max_score": 10, "max_attempts": 1, "is_required": True}, format="json")
+        self.teacher.post("/api/activities/", {"lesson": self.lesson1, "activity_type": "assignment", "title": "Bonus",
+                                               "max_score": 10, "max_attempts": 1, "is_required": False}, format="json")
+        second_id = Activity.objects.get(title="Second").id
+        self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json")
+        self.grade(self.submit().data["id"], 100)
+        self.assertEqual(self.module_statuses()[self.mod2], "locked")         # one of two required done
+        sub = self.learner.post("/api/submissions/", {"activity": second_id, "content": "x"}, format="json")
+        self.grade(sub.data["id"], 10)
+        self.assertNotEqual(self.module_statuses()[self.mod2], "locked")      # optional Bonus not needed
 
-        # --- Quiz: create, verify answer key hidden, submit, check history ---
-        quiz_activity_id = self.client.post(
-            "/api/activities/", {
-                "lesson": lesson_id, "activity_type": "quiz", "title": "Basics Quiz",
-                "max_score": 10, "max_attempts": 1, "is_required": False,
-            }, content_type="application/json", **self._auth(self.instructor_token),
-        ).json()["id"]
+    def test_quiz_pass_unlocks_next_module_and_fail_does_not(self):
+        from apps.quizzes.models import Question
+        self.build_course()
+        self.teacher.patch(f"/api/activities/{self.act}/", {"is_required": False}, format="json")
+        qa = self.teacher.post("/api/activities/", {"lesson": self.lesson1, "activity_type": "quiz", "title": "Quiz",
+                                                    "max_score": 10, "max_attempts": 2, "is_required": True}, format="json").data["id"]
+        quiz = self.teacher.post("/api/quizzes/", {"activity": qa, "pass_mark_percentage": 70}, format="json").data["id"]
+        q = Question.objects.create(quiz_id=quiz, text="?", marks=10, choices=[{"text": "a"}, {"text": "b"}], correct_choice_index=1)
+        self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json")
+        bad = self.learner.post(f"/api/quizzes/{quiz}/submit/", {"answers": {str(q.id): 0}}, format="json")
+        self.assertFalse(bad.data["passed"])
+        self.assertEqual(self.module_statuses()[self.mod2], "locked")
+        good = self.learner.post(f"/api/quizzes/{quiz}/submit/", {"answers": {str(q.id): 1}}, format="json")
+        self.assertTrue(good.data["passed"])
+        self.assertEqual(good.data["attempt_number"], 2)
+        self.assertNotEqual(self.module_statuses()[self.mod2], "locked")
 
-        resp = self.client.post(
-            "/api/quizzes/", {"activity": quiz_activity_id, "time_limit_minutes": 10, "pass_mark_percentage": 50},
-            content_type="application/json", **self._auth(self.instructor_token),
-        )
-        self.assertEqual(resp.status_code, 201)
-        quiz_id = resp.json()["id"]
+    def test_completing_every_module_completes_the_course(self):
+        self.build_course()
+        self.learner.post("/api/enrollments/", {"course": self.course_id}, format="json")
+        self.grade(self.submit().data["id"], 100)
+        dash = self.learner.get("/api/dashboard/student/").data["enrolled_courses"][0]
+        self.assertTrue(dash["completed"])
+        self.assertEqual(dash["progress_percent"], 100)
 
-        question = Question.objects.create(
-            quiz_id=quiz_id, text="2 + 2 = ?", marks=10,
-            choices=[{"text": "3"}, {"text": "4"}], correct_choice_index=1,
-        )
 
-        resp = self.client.get(f"/api/quizzes/{quiz_id}/", **self._auth(self.student_token))
-        self.assertEqual(resp.status_code, 200)
-        self.assertNotIn("correct_choice_index", resp.json()["questions"][0])
+class VideoMath(SimpleTestCase):
+    T0 = datetime(2026, 1, 1, tzinfo=dt_tz.utc)
 
-        resp = self.client.post(
-            f"/api/quizzes/{quiz_id}/submit/", {"answers": {str(question.id): 1}},
-            content_type="application/json", **self._auth(self.student_token),
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertTrue(resp.json()["passed"])
+    def vp(self):
+        return SimpleNamespace(position_seconds=0.0, duration_seconds=0.0, intervals=[], watched_seconds=0.0,
+                               completed=False, completed_at=None, last_ping_at=None, last_playing=False)
 
-        resp = self.client.get("/api/quiz-attempts/", **self._auth(self.student_token))
-        self.assertEqual(len(resp.json()), 1)
+    def ping(self, vp, at, pos, playing=True, dur=100, rate=1.0):
+        return video.apply_ping(vp, pos, dur, playing, rate, self.T0 + timedelta(seconds=at))
 
-        # --- Instructor roster shows the student by name/email ---
-        resp = self.client.get(f"/api/enrollments/?course={course_id}", **self._auth(self.instructor_token))
-        self.assertEqual(resp.json()[0]["student_email"], "student@test.com")
+    def test_normal_playback_is_credited(self):
+        vp = self.vp()
+        for t in (0, 10, 20, 30):
+            self.ping(vp, t, t)
+        self.assertAlmostEqual(vp.watched_seconds, 30, delta=0.1)
+
+    def test_seeking_to_the_end_earns_nothing_and_never_completes(self):
+        vp = self.vp()
+        self.ping(vp, 0, 0)
+        self.ping(vp, 10, 10)
+        self.ping(vp, 20, 100)             # dragged the bar to the end
+        self.assertAlmostEqual(vp.watched_seconds, 10, delta=0.1)
+        self.assertFalse(vp.completed)
+        self.assertEqual(vp.position_seconds, 100)   # resume point still follows the player
+
+    def test_fast_forward_faster_than_allowed_rate_is_not_credited(self):
+        vp = self.vp()
+        self.ping(vp, 0, 0)
+        self.ping(vp, 10, 40, rate=1.0)    # 30 s of video in 10 s at "1x"
+        self.assertEqual(vp.watched_seconds, 0)
+
+    def test_2x_playback_is_credited_only_when_declared(self):
+        vp = self.vp()
+        self.ping(vp, 0, 0, rate=2.0)
+        self.ping(vp, 10, 20, rate=2.0)
+        self.assertAlmostEqual(vp.watched_seconds, 20, delta=0.1)
+        vp2 = self.vp()
+        self.ping(vp2, 0, 0, rate=1.0)
+        self.ping(vp2, 10, 20, rate=1.0)   # claims 1x but moved 2x
+        self.assertEqual(vp2.watched_seconds, 0)
+
+    def test_rate_above_maximum_is_clamped(self):
+        vp = self.vp()
+        self.ping(vp, 0, 0, rate=16.0)
+        self.ping(vp, 10, 90, rate=16.0)   # 8x
+        self.assertEqual(vp.watched_seconds, 0)
+
+    def test_rewatching_does_not_double_count(self):
+        vp = self.vp()
+        for t in (0, 10, 20):
+            self.ping(vp, t, t)            # watched 0-20
+        self.ping(vp, 30, 0)               # jump back (no credit)
+        for t in (40, 50):
+            self.ping(vp, t, t - 30)       # watches 0-20 again
+        self.assertAlmostEqual(vp.watched_seconds, 20, delta=0.5)
+
+    def test_paused_time_and_sleeping_tabs_earn_nothing(self):
+        vp = self.vp()
+        self.ping(vp, 0, 0)
+        self.ping(vp, 10, 10, playing=False)     # paused at 10
+        self.ping(vp, 600, 11)                   # 10 min later, moved 1 s
+        self.assertAlmostEqual(vp.watched_seconds, 10, delta=0.1)
+        self.ping(vp, 700, 60)                   # 100 s gap while "playing" -> laptop asleep, no credit
+        self.assertAlmostEqual(vp.watched_seconds, 10, delta=0.1)
+
+    def test_completion_at_ninety_percent_of_real_watch_time(self):
+        vp = self.vp()
+        t = 0
+        while t <= 85:
+            self.ping(vp, t, t); t += 10
+        self.assertFalse(vp.completed)
+        self.ping(vp, 91, 91)
+        self.assertTrue(vp.completed)
+        watched = vp.watched_seconds
+        self.ping(vp, 95, 0)                     # later rewind never un-completes
+        self.assertTrue(vp.completed)
+        self.assertGreaterEqual(vp.watched_seconds, watched)
+
+    def test_position_and_duration_are_sanitised(self):
+        vp = self.vp()
+        self.ping(vp, 0, 500, dur=100)           # position beyond duration is clamped
+        self.assertEqual(vp.position_seconds, 100)
+        self.ping(vp, 5, 10, dur=100)
+        self.ping(vp, 6, 10, dur=1)              # absurd duration change ignored
+        self.assertEqual(vp.duration_seconds, 100)
+        self.assertEqual(self.ping(self.vp(), 0, 5, dur=0.5).duration_seconds, 0)   # too short to trust
+
+    def test_merge_intervals(self):
+        self.assertEqual(video.merge_intervals([[10, 20], [0, 5], [4, 12], [30, 40]]), [[0, 20], [30, 40]])
+        self.assertEqual(video.merge_intervals([[5, 5], [7, 3]]), [])
+
+
+class VideoApiTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.w = World()
+
+    def setUp(self):
+        cache.clear()
+
+    def put(self, user, lesson, **body):
+        body = {"position": 0, "duration": 100, "playing": True, "rate": 1, **body}
+        return client_for(user).put(f"/api/progress/video/{lesson.id}/", body, format="json")
+
+    def test_progress_is_saved_and_resumable(self):
+        w = self.w
+        r = self.put(w.student_1, w.l1, position=0)
+        self.assertEqual(r.status_code, 200)
+        vp = VideoProgress.objects.get()
+        vp.last_ping_at -= timedelta(seconds=10)
+        vp.save()
+        r = self.put(w.student_1, w.l1, position=10)
+        self.assertAlmostEqual(r.data["watched_seconds"], 10, delta=0.5)
+        got = client_for(w.student_1).get(f"/api/progress/video/{w.l1.id}/")
+        self.assertEqual((got.data["position"], got.data["duration"]), (10.0, 100.0))
+
+    def test_progress_is_per_student(self):
+        w = self.w
+        self.put(w.student_1, w.l1, position=30)
+        self.assertEqual(client_for(w.student_2).get(f"/api/progress/video/{w.l1.id}/").data["position"], 0)
+
+    def test_access_rules(self):
+        w = self.w
+        self.assertEqual(self.put(w.outsider, w.l1).status_code, 404)          # not enrolled
+        self.assertEqual(self.put(w.student_1, w.l2).status_code, 404)         # locked module
+        self.assertEqual(self.put(w.student_1, w.bl1).status_code, 404)        # other course
+        self.assertEqual(self.put(w.instructor_a, w.l1).status_code, 403)      # students only
+        self.assertEqual(client_for().put(f"/api/progress/video/{w.l1.id}/", {}, format="json").status_code, 401)
+
+    def test_lesson_without_trackable_video_is_rejected(self):
+        w = self.w
+        w.l1.video_url = "https://vimeo.com/123456789"      # embeddable but no position API
+        w.l1.save()
+        self.assertEqual(self.put(w.student_1, w.l1).status_code, 400)
+        w.l1.video_url = ""
+        w.l1.save()
+        self.assertEqual(self.put(w.student_1, w.l1).status_code, 400)
+
+    def test_bad_payloads(self):
+        w = self.w
+        for body in ({"position": "abc"}, {"duration": None}, {"position": -5}, {"position": "nan"}, {"duration": "inf"}, {"position": "inf"}, {"position": "1e999"}, {"duration": 0}):
+            with self.subTest(body):
+                r = self.put(w.student_1, w.l1, **body)
+                self.assertEqual(r.status_code, 400)
+
+    def test_instructor_summary_scoped_to_own_course(self):
+        w = self.w
+        self.put(w.student_1, w.l1, position=0)
+        r = client_for(w.instructor_a).get(f"/api/progress/video/{w.l1.id}/summary/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual({s["student_id"] for s in r.data["students"]}, {w.student_1.id, w.student_2.id})
+        self.assertEqual(client_for(w.instructor_b).get(f"/api/progress/video/{w.l1.id}/summary/").status_code, 403)
+        self.assertEqual(client_for(w.student_1).get(f"/api/progress/video/{w.l1.id}/summary/").status_code, 403)
+
+    def test_heartbeats_are_rate_limited(self):
+        codes = [self.put(self.w.student_1, self.w.l1).status_code for _ in range(125)]
+        self.assertIn(429, codes)
+
+    def test_watch_time_feeds_the_risk_snapshot(self):
+        from django.utils import timezone
+        from apps.dashboards.models import PerformanceSnapshot
+        w = self.w
+        VideoProgress.objects.create(student=w.student_1, lesson=w.l1, watched_seconds=600, duration_seconds=1000)
+        week = timezone.now().date() - timedelta(days=timezone.now().weekday())
+        snap = PerformanceSnapshot.snapshot_for_student_course(w.student_1, w.course_a, week)
+        self.assertAlmostEqual(snap["video_watch_minutes"], 10.0, places=3)

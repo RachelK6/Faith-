@@ -4,20 +4,21 @@ import {
   BarChart3,
   BookOpen,
   BriefcaseBusiness,
-  CheckCircle2,
+  CircleCheckBig,
   GraduationCap,
   ShieldCheck,
   Sparkles,
   Users,
 } from 'lucide-react'
+import Logo from './components/Logo.jsx'
 import { Link } from 'react-router-dom'
 
 const SITE_URL = 'https://www.yourdomain.com'
 
 const stats = [
-  { value: '12+', label: 'learning paths' },
-  { value: '98%', label: 'course completion' },
-  { value: '24/7', label: 'support access' },
+  { value: 'Courses', label: 'database-backed learning' },
+  { value: 'Progress', label: 'server-tracked milestones' },
+  { value: 'Roles', label: 'student, instructor, administrator' },
 ]
 
 const workspaces = [
@@ -58,7 +59,7 @@ const highlights = [
 
 export default function Landing() {
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900" data-role="student">
       <Helmet>
         <title>Optimum ERP LMS</title>
         <meta
@@ -70,15 +71,7 @@ export default function Landing() {
 
       <header className="border-b border-slate-200 bg-white/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-8">
-          <Link to="/" className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 text-base font-bold text-white shadow-lg shadow-violet-200">
-              O
-            </span>
-            <div className="leading-none">
-              <div className="text-lg font-extrabold tracking-tight text-slate-900">Optimum</div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">LMS</div>
-            </div>
-          </Link>
+          <Link to="/" aria-label="Optimum LMS home"><Logo tone="light" height={36} /></Link>
 
           <div className="flex items-center gap-3 text-sm font-medium text-slate-600">
             <Link to="/register" className="hidden rounded-full px-4 py-2 transition hover:bg-slate-100 hover:text-slate-900 sm:inline-flex">
@@ -86,7 +79,7 @@ export default function Landing() {
             </Link>
             <Link
               to="/login"
-              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-white shadow-sm transition hover:bg-violet-600"
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-white shadow-sm transition hover:bg-blue-600"
             >
               Log in
             </Link>
@@ -95,19 +88,19 @@ export default function Landing() {
       </header>
 
       <main>
-        <section className="bg-[radial-gradient(circle_at_top,_rgba(109,74,255,0.18),_transparent_38%),linear-gradient(135deg,#0f172a_0%,#111827_35%,#1f2937_100%)] text-white">
-          <div className="mx-auto grid max-w-7xl gap-12 px-6 py-16 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:px-8 lg:py-24">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-violet-200">
+        <section className="landing-hero mx-4 mt-4 md:mx-6 lg:mx-8">
+          <div className="mx-auto grid w-full max-w-7xl gap-12 px-0 py-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:px-0 lg:py-8">
+            <div className="dg-grow">
+              <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
                 <Sparkles size={12} />
                 Learning workspace
               </div>
 
-              <h1 className="mt-6 max-w-xl text-4xl font-black leading-tight tracking-[-0.05em] md:text-6xl">
+              <h1 className="mt-6 max-w-xl text-4xl font-black leading-tight tracking-tighter text-slate-900 md:text-6xl">
                 One secure place to learn, teach, and manage.
               </h1>
 
-              <p className="mt-5 max-w-lg text-base leading-8 text-slate-300 md:text-lg">
+              <p className="mt-5 max-w-lg text-base leading-8 text-slate-600 md:text-lg">
                 Optimum LMS gives students a clear path through each course, helps instructors guide progress,
                 and gives admins an operational view of the entire learning platform.
               </p>
@@ -115,40 +108,40 @@ export default function Landing() {
               <div className="mt-8 flex flex-wrap items-center gap-4">
                 <Link
                   to="/login"
-                  className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-6 py-3 font-semibold text-white shadow-lg shadow-violet-500/30 transition hover:bg-violet-400"
+                  className="landing-primary"
                 >
                   Sign in
                   <ArrowRight size={17} />
                 </Link>
-                <Link to="/register" className="text-sm font-semibold text-slate-200 transition hover:text-white">
+                <Link to="/register" className="text-sm font-semibold text-slate-700 transition hover:text-slate-900">
                   Create a student account
                 </Link>
               </div>
 
-              <div className="mt-10 flex flex-wrap gap-4 text-sm text-slate-300">
+              <div className="mt-10 flex flex-wrap gap-4 text-sm text-slate-600">
                 <span className="inline-flex items-center gap-2">
-                  <CheckCircle2 size={16} className="text-emerald-400" />
+                  <CircleCheckBig size={16} className="text-emerald-400" />
                   Structured courses
                 </span>
                 <span className="inline-flex items-center gap-2">
-                  <CheckCircle2 size={16} className="text-emerald-400" />
+                  <CircleCheckBig size={16} className="text-emerald-400" />
                   Role-based access
                 </span>
                 <span className="inline-flex items-center gap-2">
-                  <CheckCircle2 size={16} className="text-emerald-400" />
+                  <CircleCheckBig size={16} className="text-emerald-400" />
                   Real-time progress
                 </span>
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-white/10 bg-white/5 p-5 shadow-2xl shadow-violet-950/20 backdrop-blur-sm">
-              <div className="rounded-[22px] bg-white p-5 text-slate-900">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl shadow-blue-100">
+              <div className="rounded-2xl bg-white p-5 text-slate-900">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">Platform overview</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Platform overview</p>
                     <h2 className="mt-2 text-2xl font-bold tracking-tight">Learning at a glance</h2>
                   </div>
-                  <div className="rounded-xl bg-violet-100 p-2 text-violet-700">
+                  <div className="rounded-xl bg-blue-100 p-2 text-blue-700">
                     <BookOpen size={22} />
                   </div>
                 </div>
@@ -164,27 +157,17 @@ export default function Landing() {
                   ))}
                 </div>
 
-                <div className="mt-6 space-y-4">
+                <div className="mt-6 space-y-3">
                   {[
-                    ['HTML Fundamentals', 'Completed'],
-                    ['CSS Fundamentals', 'Completed'],
-                    ['JavaScript', 'In progress'],
-                  ].map(([course, status], index) => (
-                    <div key={course} className="rounded-2xl border border-slate-200 p-3">
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <p className="font-semibold text-slate-800">{course}</p>
-                          <p className="mt-1 text-xs text-slate-500">Module {index + 1} of 9</p>
-                        </div>
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] ${
-                            status === 'Completed'
-                              ? 'bg-emerald-100 text-emerald-700'
-                              : 'bg-amber-100 text-amber-700'
-                          }`}
-                        >
-                          {status}
-                        </span>
+                    ['Course catalog', 'Browse instructor-published courses'],
+                    ['Progress tracking', 'Required work unlocks the next module'],
+                    ['Assessments', 'Submit labs and complete quizzes'],
+                  ].map(([title, description]) => (
+                    <div key={title} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3">
+                      <CircleCheckBig size={17} className="mt-0.5 shrink-0 text-blue-700" aria-hidden="true" />
+                      <div>
+                        <p className="font-semibold text-slate-800">{title}</p>
+                        <p className="mt-1 text-xs text-slate-500">{description}</p>
                       </div>
                     </div>
                   ))}
@@ -197,7 +180,7 @@ export default function Landing() {
         <section className="mx-auto max-w-7xl px-6 py-20 lg:px-8">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-violet-600">Your workspace</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">Your workspace</p>
               <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
                 Built for the way people actually learn.
               </h2>
@@ -210,14 +193,14 @@ export default function Landing() {
               <Link
                 key={title}
                 to="/login"
-                className="group rounded-[26px] border border-slate-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:border-violet-200 hover:shadow-xl hover:shadow-violet-100"
+                className="dg-card group rounded-3xl border border-slate-200 bg-white p-6 shadow-sm transition duration-300 hover:-translate-y-1 hover:border-blue-200 hover:shadow-xl hover:shadow-blue-100"
               >
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
                   <Icon size={22} />
                 </span>
                 <h3 className="mt-6 text-xl font-bold text-slate-900">{title}</h3>
                 <p className="mt-3 text-sm leading-7 text-slate-600">{description}</p>
-                <span className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-violet-700">
+                <span className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-blue-700">
                   Go to sign in
                   <ArrowRight
                     size={15}
@@ -232,7 +215,7 @@ export default function Landing() {
         <section className="bg-white">
           <div className="mx-auto max-w-7xl px-6 py-20 lg:px-8">
             <div className="mx-auto max-w-2xl text-center">
-              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-violet-600">Why learners stay engaged</p>
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-600">Why learners stay engaged</p>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-slate-900 md:text-4xl">
                 Clear structure. Better momentum. Better outcomes.
               </h2>
@@ -240,8 +223,8 @@ export default function Landing() {
 
             <div className="mt-10 grid gap-5 md:grid-cols-3">
               {highlights.map(({ icon: Icon, title, text }) => (
-                <div key={title} className="rounded-[24px] border border-slate-200 bg-slate-50 p-6">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-violet-700 shadow-sm">
+                <div key={title} className="dg-card rounded-3xl border border-slate-200 bg-slate-50 p-6">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-blue-700 shadow-sm">
                     <Icon size={22} />
                   </span>
                   <h3 className="mt-6 text-xl font-bold text-slate-900">{title}</h3>

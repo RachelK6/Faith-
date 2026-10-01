@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 130" width="120" height="130" role="img" aria-label="Optimum LMS"><title>Optimum LMS</title><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="12" y1="8" x2="116" y2="122"><stop offset="0" stop-color="#5B82FF"/><stop offset="1" stop-color="#2F5FEA"/></linearGradient></defs><g transform="translate(-4 0)"><g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<path d="M64 8 L116 28 L64 48 L12 28 Z" fill="url(#g)" stroke="url(#g)" stroke-width="4"/>
+<path d="M104 33 V47" stroke="url(#g)" stroke-width="4.5"/>
+<circle cx="64" cy="88" r="28" stroke="url(#g)" stroke-width="12"/>
+<path d="M54 81 L47 88 L54 95 M74 81 L81 88 L74 95 M67 79 L61 97" stroke="url(#g)" stroke-width="4.5"/>
+</g></g></svg>

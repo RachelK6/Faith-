@@ -21,31 +21,9 @@ API is at `http://localhost:8000/api/`. Django admin (for creating
 instructor/admin accounts — see security note below) is at
 `http://localhost:8000/admin/`.
 
-## Switching to real SQL Server
+## Database
 
-This ships defaulting to SQLite so it runs with zero setup. To point it at
-real SQL Server:
-
-1. Install the ODBC driver on the machine running this (not a Python
-   package — a system driver):
-   - **Ubuntu/Debian**: follow Microsoft's `msodbcsql18` install docs for
-     your distro (adds Microsoft's apt repo, then `apt install msodbcsql18`)
-   - **macOS**: `brew install msodbcsql18` (via `brew tap microsoft/mssql-release`)
-   - **Windows**: usually already present, or install from Microsoft's
-     "ODBC Driver for SQL Server" download page
-2. In `.env`, set `DB_ENGINE=mssql` and fill in `MSSQL_DB_NAME`,
-   `MSSQL_DB_USER`, `MSSQL_DB_PASSWORD`, `MSSQL_DB_HOST`, `MSSQL_DB_PORT`.
-3. If your driver has a different exact name (check with
-   `odbcinst -q -d` on Linux/Mac), set `MSSQL_ODBC_DRIVER` to match —
-   it must match exactly, including the version number.
-4. Run `python manage.py migrate` again against the new database.
-
-**I could not test the actual MSSQL connection in the environment this was
-built in** — no network access to a SQL Server instance. The Django/model
-code is identical either way (that's the point of Django's ORM), and
-`mssql-django` is Microsoft's own maintained backend, but budget time to
-verify the real connection string and driver name on your machine before
-trusting it in front of the client.
+Microsoft SQL Server is the only supported database. Install ODBC Driver 18 and configure `MSSQL_DB_NAME`, `MSSQL_DB_USER`, `MSSQL_DB_PASSWORD`, `MSSQL_DB_HOST`, and `MSSQL_DB_PORT`, then run `python manage.py migrate`. See the root [DATABASE_SETUP.md](../DATABASE_SETUP.md) for certificate, Docker, and existing-data migration guidance.
 
 ## What's implemented and verified
 
@@ -72,21 +50,18 @@ Every endpoint below was tested against a running server, not just written:
 
 ## What's stubbed / needs more work
 
-- **`execution` app**: forwards to an external `SANDBOX_URL` — no sandbox
-  service exists yet. This needs to be a separate piece of infrastructure
-  (Judge0, Piston, or a custom Docker-based runner), not code inside this
-  repo. See the docstring in `apps/execution/views.py`.
-- **Question creation**: there's no dedicated "add question to quiz"
-  endpoint yet — during testing this was done via Django shell. Add a
-  `QuestionViewSet` (same `ReadOnlyOrInstructorAdmin` pattern as courses)
-  before instructors need to build real quizzes through the UI.
+- **`execution` app**: forwards to the separate `sandbox/` service in this
+  repository. Keep the runner isolated from Django and verify its container
+  restrictions and network boundaries in the deployment environment.
+- **Question creation**: quiz questions are managed through the `QuestionViewSet` under `/api/quiz-questions/`; instructor/admin write permissions are enforced.
 - **"Falling behind" definition** in the instructor dashboard (no
   completed activity in 7 days) is a real, working first pass — loops over
   every enrolled student per course. Fine at small scale; revisit with a
   cached/precomputed version before 3,000 students make that loop slow.
-- No file-upload validation (type/size limits) on `Submission.file` yet.
+- Submission uploads have server-side extension, signature/content, size,
+  and archive validation in `apps/submissions/validators.py`.
 - Production requires real `DJANGO_SECRET_KEY`, host, and CORS values; startup fails closed when they are missing.
-- Production also refuses to start with SQLite; set `DB_ENGINE=mssql` and provide the SQL Server connection values.
+- Production requires SQL Server connection values and HTTPS email-link configuration.
 - Refresh tokens rotate and are blacklisted after use; clients should call `/api/auth/logout/` before clearing a session.
 - Public signup creates students only. Administrators can create instructor and admin accounts at `/admin/`, where the platform role is explicitly selectable.
 - The first account created with `createsuperuser` is automatically assigned the `admin` platform role.

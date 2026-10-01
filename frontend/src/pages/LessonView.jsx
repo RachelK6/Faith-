@@ -3,8 +3,10 @@ import { Helmet } from 'react-helmet-async'
 import { Link, useParams } from 'react-router-dom'
 import {
   LayoutDashboard, BookOpen, GraduationCap, FileText, Play, Send,
-  CheckCircle2, Upload,
+  CircleCheckBig, Upload, ChevronLeft, ChevronRight,
 } from 'lucide-react'
+import LessonVideo from '../components/LessonVideo.jsx'
+import { ACCEPT, MAX_UPLOAD_MB, checkUpload } from '../lib/uploadRules.js'
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
@@ -15,44 +17,102 @@ const navItems = [
   { to: '/dashboard/student/grades', label: 'Grades', icon: GraduationCap },
 ]
 
-// Turns a YouTube watch/share URL into its embeddable form. Anything else
-// (Vimeo, a direct file, an unrecognized host) just gets a normal link —
-// building a universal video-embed resolver is out of scope here, and a
-// plain link always works as a fallback.
-function toEmbedUrl(url) {
-  if (!url) return null
-  const watch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)/)
-  if (watch) return `https://www.youtube.com/embed/${watch[1]}`
-  return null
-}
-
 export default function LessonView() {
   const { lessonId } = useParams()
   const { auth } = useAuth()
   const [lesson, setLesson] = useState(null)
+  const [course, setCourse] = useState(null)
+  const [module, setModule] = useState(null)
+  const [moduleLessons, setModuleLessons] = useState([])
   const [error, setError] = useState('')
 
-  function reload() {
-    api.get(`/lessons/${lessonId}/`).then(setLesson).catch((err) => setError(err.message))
+  async function fetchLessonContext(id) {
+    const currentLesson = await api.get(`/lessons/${id}/`)
+    const currentModule = await api.get(`/modules/${currentLesson.module}/`)
+    const [courseDetail, lessons] = await Promise.all([
+        api.get(`/courses/${currentModule.course}/`),
+        api.get(`/lessons/?module=${currentModule.id}`),
+    ])
+    return { currentLesson, currentModule, courseDetail, lessons }
   }
 
-  useEffect(reload, [lessonId])
+  function applyLessonContext(context) {
+    setLesson(context.currentLesson)
+    setModule(context.currentModule)
+    setCourse(context.courseDetail)
+    setModuleLessons(context.lessons)
+  }
 
-  const embedUrl = toEmbedUrl(lesson?.video_url)
+  async function reload() {
+    setError('')
+    try {
+      applyLessonContext(await fetchLessonContext(lessonId))
+    } catch (err) {
+      setError(err.message || 'Unable to load this lesson.')
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    fetchLessonContext(lessonId)
+      .then((context) => {
+        if (cancelled) return
+        applyLessonContext(context)
+        setError('')
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message || 'Unable to load this lesson.')
+      })
+    return () => { cancelled = true }
+  }, [lessonId])
 
   return (
     <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Student' }}>
       <Helmet><meta name="robots" content="noindex, nofollow" /></Helmet>
 
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-4xl space-y-6">
         {error && (
           <div className="rounded-lg border border-line bg-coral-tint px-4 py-3 text-sm text-coral-dim">{error}</div>
         )}
 
         {lesson && (
           <>
+            {course && module && (
+              <div className="rounded-xl border border-line bg-paper p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Link to={`/dashboard/student/courses/${course.id}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-700 hover:text-blue-900">
+                    <ChevronLeft size={16} aria-hidden="true" /> {course.title}
+                  </Link>
+                  <span className="text-xs font-medium text-text-muted">Module {module.order}: {module.title}</span>
+                </div>
+                {moduleLessons.length > 0 && (
+                  <nav className="mt-3 border-t border-line pt-3" aria-label="Lessons in this module">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-text-muted">Module lessons</p>
+                    <ol className="flex gap-2 overflow-x-auto pb-1">
+                      {moduleLessons.map((item, index) => {
+                        const current = String(item.id) === String(lesson.id)
+                        return (
+                          <li key={item.id} className="shrink-0">
+                            {current ? (
+                              <span aria-current="step" className="inline-flex max-w-56 items-center gap-2 rounded-md bg-blue-700 px-3 py-2 text-xs font-semibold text-white">
+                                <span>{index + 1}</span><span className="truncate">{item.title}</span>
+                              </span>
+                            ) : (
+                              <Link to={`/dashboard/student/lessons/${item.id}`} className="inline-flex max-w-56 items-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-medium text-ink hover:border-blue-400 hover:bg-blue-50">
+                                <span className="text-text-muted">{index + 1}</span><span className="truncate">{item.title}</span>
+                              </Link>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  </nav>
+                )}
+              </div>
+            )}
+
             <div>
-              <p className="text-sm text-text-muted">Lesson {lesson.order}</p>
+              <p className="text-sm text-text-muted">Lesson {lesson.order}{moduleLessons.length ? ` of ${moduleLessons.length}` : ''}</p>
               <h2 className="mt-1 text-2xl font-bold text-ink">{lesson.title}</h2>
               {lesson.learning_objectives && (
                 <p className="mt-2 text-sm text-text-muted">{lesson.learning_objectives}</p>
@@ -60,27 +120,14 @@ export default function LessonView() {
             </div>
 
             {lesson.video_url && (
-              <div className="overflow-hidden rounded-2xl border border-line bg-paper">
-                {embedUrl ? (
-                  <div className="aspect-video w-full">
-                    <iframe
-                      src={embedUrl}
-                      title={lesson.title}
-                      className="h-full w-full"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                      allowFullScreen
-                    />
-                  </div>
-                ) : (
-                  <a
-                    href={lesson.video_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-2 p-5 text-sm font-medium text-coral hover:text-coral-dim"
-                  >
-                    <Play size={18} /> Watch the video (opens in a new tab)
-                  </a>
-                )}
+              <div className="rounded-2xl border border-line bg-paper p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                <LessonVideo lessonId={lesson.id} url={lesson.video_url} track />
+              </div>
+            )}
+
+            {lesson.video_file_url && (
+              <div className="rounded-2xl border border-line bg-paper p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                <LessonVideo key={lesson.video_file_url} lessonId={lesson.id} url={lesson.video_file_url} uploadedVideo track />
               </div>
             )}
 
@@ -96,15 +143,14 @@ export default function LessonView() {
                 <h3 className="font-semibold text-ink">Resources</h3>
                 <div className="mt-3 space-y-2">
                   {lesson.attachments.map((a) => (
-                    <a
+                    <button
                       key={a.id}
-                      href={a.file}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm text-ink hover:border-text-dim"
+                      type="button"
+                      onClick={() => api.download(a.download_url.replace(/^\/api/, ''), `${a.title}.pdf`).catch((err) => window.alert(err.message))}
+                      className="flex w-full items-center gap-2 rounded-md border border-line px-3 py-2 text-left text-sm text-ink hover:border-text-dim"
                     >
                       <FileText size={16} className="text-coral" /> {a.title}
-                    </a>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -117,6 +163,34 @@ export default function LessonView() {
                   <ActivityCard key={activity.id} activity={activity} onSubmitted={reload} />
                 ))}
               </div>
+            )}
+
+            {moduleLessons.length > 1 && (
+              <nav className="flex items-center justify-between gap-3 border-t border-line pt-5" aria-label="Lesson navigation">
+                {(() => {
+                  const index = moduleLessons.findIndex((item) => String(item.id) === String(lesson.id))
+                  const previous = index > 0 ? moduleLessons[index - 1] : null
+                  const next = index >= 0 && index < moduleLessons.length - 1 ? moduleLessons[index + 1] : null
+                  return (
+                    <>
+                      {previous ? (
+                        <Link to={`/dashboard/student/lessons/${previous.id}`} className="inline-flex max-w-[48%] items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-ink hover:bg-panel">
+                          <ChevronLeft size={16} aria-hidden="true" /><span className="truncate">{previous.title}</span>
+                        </Link>
+                      ) : <span />}
+                      {next ? (
+                        <Link to={`/dashboard/student/lessons/${next.id}`} className="inline-flex max-w-[48%] items-center gap-2 rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800">
+                          <span className="truncate">{next.title}</span><ChevronRight size={16} aria-hidden="true" />
+                        </Link>
+                      ) : (
+                        <Link to={`/dashboard/student/courses/${course.id}`} className="inline-flex items-center gap-2 rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800">
+                          Back to course <ChevronRight size={16} aria-hidden="true" />
+                        </Link>
+                      )}
+                    </>
+                  )
+                })()}
+              </nav>
             )}
           </>
         )}
@@ -165,12 +239,14 @@ function ExerciseRunner({ activity, onSubmitted }) {
   const [output, setOutput] = useState(null)
   const [testResults, setTestResults] = useState(null)
   const [status, setStatus] = useState('')
+  const [isError, setIsError] = useState(false)
   const [busy, setBusy] = useState(false)
 
   async function handleRun() {
     setBusy(true)
     setOutput(null)
     setStatus('')
+    setIsError(false)
     try {
       const result = await api.post('/execute/run/', { language, code })
       setOutput(result)
@@ -200,10 +276,12 @@ function ExerciseRunner({ activity, onSubmitted }) {
     setStatus('')
     try {
       await api.post('/submissions/', { activity: activity.id, content: code })
-      setStatus('Submitted! Your instructor will grade it, or it may already be scored above.')
+      setIsError(false)
+      setStatus('Submitted! Your instructor will grade it.')
       onSubmitted?.()
     } catch (err) {
-      setStatus(err.message)
+      setIsError(true)
+      setStatus(err.status === 429 ? 'You are submitting too quickly. Please wait a moment.' : err.message)
     } finally {
       setBusy(false)
     }
@@ -236,7 +314,7 @@ function ExerciseRunner({ activity, onSubmitted }) {
           <Play size={14} /> Run
         </button>
         <button onClick={handleRunTests} disabled={busy} className="flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink hover:border-text-dim disabled:opacity-60">
-          <CheckCircle2 size={14} /> Run tests
+          <CircleCheckBig size={14} /> Run tests
         </button>
         <button onClick={handleSubmit} disabled={busy} className="flex items-center gap-1.5 rounded-md bg-coral px-3 py-1.5 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60">
           <Send size={14} /> Submit
@@ -245,21 +323,43 @@ function ExerciseRunner({ activity, onSubmitted }) {
 
       {output && (
         <div className="rounded-md bg-panel p-3 font-mono text-xs text-ink">
-          {output.error ? <span className="text-coral-dim">{output.error}</span> : <pre className="whitespace-pre-wrap">{JSON.stringify(output, null, 2)}</pre>}
+          {output.error ? (
+            <span className="text-red-600">{output.error}</span>
+          ) : (
+            <>
+              {output.timed_out && <p className="mb-1 font-semibold text-red-600">Stopped: your code ran too long (time limit).</p>}
+              {output.stdout && <pre className="whitespace-pre-wrap">{output.stdout}</pre>}
+              {output.stderr && <pre className="whitespace-pre-wrap text-red-600">{output.stderr}</pre>}
+              {!output.stdout && !output.stderr && !output.timed_out && <span className="text-text-muted">(no output)</span>}
+            </>
+          )}
         </div>
       )}
 
       {testResults && (
         <div className="rounded-md bg-panel p-3 text-sm">
           {testResults.error ? (
-            <span className="text-coral-dim">{testResults.error}</span>
+            <span className="text-red-600">{testResults.error}</span>
           ) : (
-            <pre className="whitespace-pre-wrap font-mono text-xs text-ink">{JSON.stringify(testResults, null, 2)}</pre>
+            <div role="status">
+              <p className="font-semibold text-ink">{testResults.passed} of {testResults.total} tests passed</p>
+              <ul className="mt-2 space-y-1.5">
+                {testResults.results.map((r) => (
+                  <li key={r.index} className={r.passed ? 'text-emerald-700' : 'text-red-600'}>
+                    Test {r.index}: {r.passed ? 'passed' : r.timed_out ? 'timed out' : 'failed'}
+                    {r.expected_output !== undefined && !r.passed && (
+                      <span className="block font-mono text-xs text-text-muted">expected “{r.expected_output}” · got “{r.actual_output}”</span>
+                    )}
+                    {r.error && <span className="block whitespace-pre-wrap font-mono text-xs">{r.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
       )}
 
-      {status && <p className="text-sm text-mint">{status}</p>}
+      {status && <p role={isError ? 'alert' : 'status'} className={`text-sm ${isError ? 'text-red-600' : 'text-emerald-700'}`}>{status}</p>}
     </div>
   )
 }
@@ -269,12 +369,28 @@ function SubmissionForm({ activity, onSubmitted }) {
   const [githubUrl, setGithubUrl] = useState('')
   const [file, setFile] = useState(null)
   const [status, setStatus] = useState('')
+  const [isError, setIsError] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  function pickFile(e) {
+    const picked = e.target.files?.[0] || null
+    const problem = checkUpload(picked)
+    if (problem) {
+      setFile(null)
+      e.target.value = ''
+      setIsError(true)
+      setStatus(problem)
+      return
+    }
+    setStatus('')
+    setFile(picked)
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     setBusy(true)
     setStatus('')
+    setIsError(false)
     try {
       if (file) {
         const formData = new FormData()
@@ -287,12 +403,14 @@ function SubmissionForm({ activity, onSubmitted }) {
         await api.post('/submissions/', { activity: activity.id, content, github_url: githubUrl })
       }
       setStatus('Submitted successfully.')
+      setIsError(false)
       setContent('')
       setGithubUrl('')
       setFile(null)
       onSubmitted?.()
     } catch (err) {
-      setStatus(err.message)
+      setIsError(true)
+      setStatus(err.status === 429 ? 'You are submitting too quickly. Please wait a moment.' : err.message)
     } finally {
       setBusy(false)
     }
@@ -315,16 +433,18 @@ function SubmissionForm({ activity, onSubmitted }) {
       />
       <input
         type="file"
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
+        accept={ACCEPT}
+        onChange={pickFile}
         className="w-full text-sm text-text-muted"
       />
+      <p className="text-xs text-text-dim">Files: PDF, ZIP, DOCX, images or source files, up to {MAX_UPLOAD_MB} MB.</p>
       <button
         disabled={busy || (!content && !githubUrl && !file)}
         className="flex items-center gap-1.5 rounded-md bg-coral px-4 py-2 text-sm font-medium text-white hover:bg-coral-dim disabled:opacity-60"
       >
         <Upload size={16} /> {busy ? 'Submitting…' : 'Submit'}
       </button>
-      {status && <p className="text-sm text-mint">{status}</p>}
+      {status && <p role={isError ? 'alert' : 'status'} className={`text-sm ${isError ? 'text-red-600' : 'text-emerald-700'}`}>{status}</p>}
     </form>
   )
 }

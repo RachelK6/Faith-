@@ -8,7 +8,7 @@ server-enforced module progression.
 optimum-erp-lms/
 ├── backend/          Django + DRF API (see backend/README.md)
 ├── frontend/          React + Vite + Tailwind (see frontend/README.md)
-└── DATABASE_SETUP.md  Full manual for SQLite (dev) and MSSQL (production)
+└── DATABASE_SETUP.md  SQL Server setup and migration guidance
 ```
 
 ## Quick start (local development)
@@ -74,10 +74,7 @@ Django admin: `http://localhost:8000/admin`
 
 ## Database
 
-Ships defaulting to SQLite so the quick start above works with zero
-database setup. For real SQL Server (staging/production), see
-**[DATABASE_SETUP.md](./DATABASE_SETUP.md)** — full manual covering driver
-installation, connection configuration, and troubleshooting.
+The backend uses Microsoft SQL Server in every environment. Install ODBC Driver 18 and configure the `MSSQL_*` settings in `backend/.env`; see **[DATABASE_SETUP.md](./DATABASE_SETUP.md)** for local, Docker, production, and existing-data migration steps.
 
 ## Security notes
 
@@ -100,4 +97,4 @@ installation, connection configuration, and troubleshooting.
   why the backend is split the way it is, data model, deployment topology
 - `backend/README.md` — what's implemented vs. stubbed, the permission
   pattern used across every app
-- `DATABASE_SETUP.md` — database configuration, SQLite → MSSQL switch-over
+- `DATABASE_SETUP.md` — SQL Server configuration and safe data migration

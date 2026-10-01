@@ -5,14 +5,23 @@ import { AuthContext } from './auth-context.js'
 export function AuthProvider({ children }) {
   const [auth, setAuth] = useState(() => {
     const tokens = getTokens()
-    if (!tokens?.access) return null
-    const payload = decodeToken(tokens.access)
-    if (!payload) return null
-    // exp is in seconds since epoch; if the access token has expired,
-    // don't trust it — treat as logged out rather than showing a role
-    // that's no longer valid.
-    if (payload.exp * 1000 < Date.now()) return null
-    return { role: payload.role, email: payload.email }
+    if (tokens?.access === 'mock-jwt-token' || tokens?.refresh === 'mock-jwt-refresh') {
+      clearTokens()
+      return null
+    }
+    if (!tokens?.access && !tokens?.refresh) return null
+    // The access token only lives 15 minutes; the refresh token lives 7 days.
+    // If only the access token has expired, keep the session: the first API
+    // call refreshes it transparently. Only a dead refresh token means "logged out".
+    const now = Date.now()
+    const live = [tokens.access, tokens.refresh]
+      .map((t) => (t ? decodeToken(t) : null))
+      .filter((p) => p && p.exp * 1000 > now)
+    if (!live.length) {
+      clearTokens()
+      return null
+    }
+    return { role: live[0].role, email: live[0].email }
   })
 
   const login = useCallback(async (email, password) => {
@@ -27,10 +36,20 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     const tokens = getTokens()
     try {
-      if (tokens?.refresh) await api.logout(tokens.refresh)
+      if (tokens?.refresh) {
+        try {
+          await api.logout(tokens.refresh)
+        } catch {
+          // Ignore backend logout failures and still clear the client session.
+        }
+      }
     } finally {
       clearTokens()
       setAuth(null)
+
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.assign('/login')
+      }
     }
   }, [])
 

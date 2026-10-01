@@ -62,7 +62,13 @@ def mark_activity_complete(student, activity: Activity, score: float | None = No
     Idempotent — calling it twice for the same student+activity just
     updates the score, it doesn't create a duplicate record.
     """
+    was_complete = ActivityCompletion.objects.filter(student=student, activity=activity).exists()
     completion, _ = ActivityCompletion.objects.update_or_create(
         student=student, activity=activity, defaults={"score": score}
     )
+    from apps.engagement.services import record_activity_completion, sync_course_certificate
+
+    if not was_complete:
+        record_activity_completion(student, activity)
+    sync_course_certificate(student, activity.lesson.module.course)
     return completion

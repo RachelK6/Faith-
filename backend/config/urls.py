@@ -18,12 +18,21 @@ urlpatterns = [
     path("api/", include("apps.quizzes.urls")),
     path("api/execute/", include("apps.execution.urls")),
     path("api/dashboard/", include("apps.dashboards.urls")),
+    path("api/engagement/", include("apps.engagement.urls")),
+    path("api/risk/", include("apps.risk.urls")),
+    path("api/sequencing/", include("apps.sequencing.urls")),
+    path("api/allocation/", include("apps.allocation.urls")),
 ]
 
 if settings.DEBUG:
-    # Dev-only: Django serves uploaded PDFs itself so they're reachable
-    # at MEDIA_URL. In production, a real web server (nginx) or object
-    # storage (S3/Azure Blob) should serve these instead — Django serving
-    # media files itself in production is both slow and not what
-    # SecurityMiddleware/staticfiles are designed for.
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # Dev-only. Serve ONLY public assets (course cover images). Submissions and
+    # lesson PDFs are private: they're delivered by authenticated API endpoints
+    # (/api/submissions/<id>/download/, /api/lesson-attachments/<id>/download/)
+    # that re-check enrollment, module locking and ownership. In production make
+    # sure nginx/object storage exposes course_covers/ only.
+    from django.urls import re_path
+    from django.views.static import serve
+
+    urlpatterns += [
+        re_path(r"^media/(?P<path>course_covers/.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    ]

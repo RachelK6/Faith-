@@ -6,8 +6,8 @@ from .models import User
 @admin.register(User)
 class UserAdminConfig(UserAdmin):
 	fieldsets = UserAdmin.fieldsets + (
-		("Platform role", {"fields": ("role",)}),
+		("Platform access", {"fields": ("role", "email_verified")}),
 	)
 	add_fieldsets = UserAdmin.add_fieldsets + (
-		("Platform role", {"fields": ("role",)}),
+		("Platform access", {"fields": ("role", "email_verified")}),
 	)

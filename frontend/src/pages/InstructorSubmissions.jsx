@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
-import { LayoutDashboard, BookOpen, FileCheck, Users, CheckCircle2, Clock3 } from 'lucide-react'
+import { LayoutDashboard, BookOpen, FileCheck, Users, CircleCheckBig, Clock3 } from 'lucide-react'
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
@@ -97,7 +97,7 @@ function SubmissionRow({ submission, onGraded }) {
         </div>
         {submission.status === 'graded' ? (
           <span className="flex items-center gap-1.5 rounded-full bg-mint/15 px-3 py-1 text-sm font-medium text-mint">
-            <CheckCircle2 size={14} /> {submission.grade} pts
+            <CircleCheckBig size={14} /> {submission.grade} / {submission.max_score} pts
           </span>
         ) : (
           <span className="flex items-center gap-1.5 rounded-full bg-panel px-3 py-1 text-sm text-text-muted">
@@ -116,10 +116,14 @@ function SubmissionRow({ submission, onGraded }) {
           {submission.github_url}
         </a>
       )}
-      {submission.file && (
-        <a href={submission.file} target="_blank" rel="noreferrer" className="mt-2 block text-sm text-coral hover:underline">
-          Download attached file
-        </a>
+      {submission.download_url && (
+        <button
+          type="button"
+          onClick={() => api.download(submission.download_url.replace(/^\/api/, ''), submission.file_name).catch((err) => setError(err.message))}
+          className="mt-2 block text-sm text-coral hover:underline"
+        >
+          Download {submission.file_name || 'attached file'}
+        </button>
       )}
 
       {grading ? (
@@ -128,9 +132,12 @@ function SubmissionRow({ submission, onGraded }) {
           <div className="flex gap-2">
             <input
               type="number"
+              min={0}
+              max={submission.max_score}
+              step="any"
               value={grade}
               onChange={(e) => setGrade(e.target.value)}
-              placeholder="Score"
+              placeholder={`Score / ${submission.max_score}`}
               required
               className="w-28 rounded-md border border-line bg-paper px-3 py-2 text-sm text-ink"
             />

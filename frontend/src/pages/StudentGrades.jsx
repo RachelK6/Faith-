@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
-import { LayoutDashboard, BookOpen, GraduationCap, CheckCircle2, Clock3 } from 'lucide-react'
+import { LayoutDashboard, BookOpen, GraduationCap, CircleCheckBig, Clock3 } from 'lucide-react'
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
@@ -52,7 +52,7 @@ export default function StudentGrades() {
                 </div>
                 {s.status === 'graded' ? (
                   <span className="flex items-center gap-1.5 rounded-full bg-mint/15 px-3 py-1 text-sm font-medium text-mint">
-                    <CheckCircle2 size={14} /> {s.grade} pts
+                    <CircleCheckBig size={14} /> {s.grade} pts
                   </span>
                 ) : (
                   <span className="flex items-center gap-1.5 rounded-full bg-panel px-3 py-1 text-sm text-text-muted">

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Optimum LMS favicon"><title>Optimum LMS favicon</title><defs><linearGradient id="t" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="128" y2="128"><stop offset="0" stop-color="#5B82FF"/><stop offset="1" stop-color="#2F5FEA"/></linearGradient></defs><rect width="128" height="128" rx="28" fill="url(#t)"/><g transform="translate(64 64) scale(0.82) translate(-64 -64)"><g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<path d="M64 6 L118 27 L64 48 L10 27 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="5"/>
+<circle cx="64" cy="89" r="27" stroke="#FFFFFF" stroke-width="16"/>
+<path d="M56 83 L50 89 L56 95 M72 83 L78 89 L72 95" stroke="#FFFFFF" stroke-width="6"/>
+</g></g></svg>

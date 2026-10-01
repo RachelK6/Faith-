@@ -10,7 +10,7 @@ flowchart LR
 
     subgraph Server
         API[Django REST API]
-        DB[(SQL Server / SQLite)]
+        DB[(Microsoft SQL Server)]
     end
 
     subgraph External
@@ -70,10 +70,14 @@ backend/apps/
 ├── courses/       Course → Module → Lesson → Activity (the content tree)
 ├── enrollment/    Student ↔ Course
 ├── progress/      Module-locking logic (services.py) + ActivityCompletion
+├── engagement/    Study-day streaks, achievement awards, notifications, certificates
 ├── submissions/   Lab/assignment submissions, attempt limits, grading
 ├── quizzes/       Quiz, Question, auto-grading
 ├── execution/     Thin client to the external sandbox — no models
-└── dashboards/    Read-only aggregation over the apps above — no models
+├── dashboards/    Read-only aggregation and weekly performance snapshots
+├── risk/          Early warning scoring over performance snapshots
+├── sequencing/    Database-derived next-step recommendations
+└── allocation/    Admin workload allocation recommendations
 ```
 
 **Why split this way, not by technical layer:** a folder per domain (not
@@ -108,6 +112,12 @@ erDiagram
     Quiz ||--o{ QuizAttempt : has
     User ||--o{ ActivityCompletion : earns
     Activity ||--o{ ActivityCompletion : "completed via"
+    User ||--o{ LearningActivityDay : records
+    User ||--o{ StudentAchievement : earns
+    Achievement ||--o{ StudentAchievement : awards
+    User ||--o{ Notification : receives
+    User ||--o{ Certificate : receives
+    Course ||--o{ Certificate : certifies
 ```
 
 `ActivityCompletion` (in the `progress` app) is the single source of
@@ -116,9 +126,15 @@ truth for "has this student finished this activity" — `submissions` and
 reads from it to decide what's unlocked. Nothing else duplicates a
 "completed" flag.
 
+The `engagement` app consumes those completion events and verified video-watch
+increments. It stores one study day per learner/date, idempotent achievement
+awards, recipient-scoped notifications, and certificate issuance/revocation
+history. Course completion is still decided by the existing progress service;
+engagement does not introduce a competing completion rule.
+
 ## Authentication & authorization
 
-- **JWT**, via `djangorestframework-simplejwt`. Access token: 24h.
+- **JWT**, via `djangorestframework-simplejwt`. Access token: 15 minutes.
   Refresh token: 7 days.
 - **Role lives on the User model** (`student` / `instructor` / `admin`),
   embedded in the JWT payload so the frontend can route without an extra

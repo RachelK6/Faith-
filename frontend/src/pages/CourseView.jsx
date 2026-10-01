@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Helmet } from 'react-helmet-async'
 import { Link, useParams } from 'react-router-dom'
-import { LayoutDashboard, BookOpen, GraduationCap, Lock, CheckCircle2, Circle, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, BookOpen, GraduationCap, Lock, CircleCheckBig, Circle, ChevronRight } from 'lucide-react'
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
@@ -13,7 +13,7 @@ const navItems = [
 ]
 
 const STATUS_STYLE = {
-  done: { icon: CheckCircle2, color: 'text-mint', label: 'Completed' },
+  done: { icon: CircleCheckBig, color: 'text-mint', label: 'Completed' },
   active: { icon: Circle, color: 'text-coral', label: 'In progress' },
   locked: { icon: Lock, color: 'text-text-dim', label: 'Locked' },
 }

@@ -1,10 +1,13 @@
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
 import { HelmetProvider } from 'react-helmet-async'
 import { AuthProvider } from './context/AuthContext.jsx'
+import { ToastProvider } from './hooks/useToast.js'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import Landing from './Landing.jsx'
 import Login from './pages/Login.jsx'
 import Register from './pages/Register.jsx'
+import EmailVerification from './pages/EmailVerification.jsx'
+import PasswordReset from './pages/PasswordReset.jsx'
 import StudentDashboard from './pages/StudentDashboard.jsx'
 import CourseCatalog from './pages/CourseCatalog.jsx'
 import CourseView from './pages/CourseView.jsx'
@@ -33,11 +36,15 @@ function App() {
   return (
     <HelmetProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+        <ToastProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/verify-email" element={<EmailVerification />} />
+              <Route path="/forgot-password" element={<PasswordReset />} />
+              <Route path="/reset-password" element={<PasswordReset />} />
 
             {/* Student */}
             <Route
@@ -134,9 +141,10 @@ function App() {
             />
 
             {/* Unmatched paths land here instead of rendering a blank screen. */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </ToastProvider>
       </AuthProvider>
     </HelmetProvider>
   )

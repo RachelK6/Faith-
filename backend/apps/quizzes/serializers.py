@@ -15,13 +15,31 @@ class QuestionForInstructorSerializer(serializers.ModelSerializer):
         model = Question
         fields = ["id", "quiz", "text", "marks", "choices", "correct_choice_index"]
 
+    def validate_choices(self, choices):
+        if not isinstance(choices, list) or len(choices) < 2:
+            raise serializers.ValidationError("Provide at least two answer choices.")
+        if any(not isinstance(choice, dict) or not str(choice.get("text", "")).strip() for choice in choices):
+            raise serializers.ValidationError("Each answer choice must have non-empty text.")
+        return choices
+
+    def validate(self, attrs):
+        choices = attrs.get("choices", self.instance.choices if self.instance else [])
+        correct_index = attrs.get(
+            "correct_choice_index",
+            self.instance.correct_choice_index if self.instance else None,
+        )
+        if correct_index is not None and correct_index >= len(choices):
+            raise serializers.ValidationError({"correct_choice_index": "Select one of the available choices."})
+        return attrs
+
 
 class QuizSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(source="activity.title", read_only=True)
     questions = QuestionForStudentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Quiz
-        fields = ["id", "activity", "time_limit_minutes", "pass_mark_percentage", "questions"]
+        fields = ["id", "activity", "title", "time_limit_minutes", "pass_mark_percentage", "questions"]
 
 
 class SubmitQuizSerializer(serializers.Serializer):

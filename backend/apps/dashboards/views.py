@@ -10,8 +10,9 @@ from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.access import ADMIN, role_of
 from apps.accounts.permissions import IsInstructorOrAdmin, IsAdmin
-from apps.courses.models import Course, Module
+from apps.courses.models import Activity, Course, Lesson, Module
 from apps.enrollment.models import Enrollment
 from apps.progress.services import is_module_complete, is_module_unlocked
 from apps.submissions.models import Submission, SubmissionStatus
@@ -28,25 +29,51 @@ class StudentDashboardView(APIView):
 
     def get(self, request):
         student = request.user
-        enrollments = Enrollment.objects.filter(student=student).select_related("course")
+        enrollments = Enrollment.objects.filter(
+            student=student, course__status=Course.Status.PUBLISHED
+        ).select_related("course")
 
         courses_data = []
         for enrollment in enrollments:
             modules = Module.objects.filter(course=enrollment.course).order_by("order")
             total = modules.count()
-            done = sum(1 for m in modules if is_module_complete(student, m))
-            # first module that's unlocked but not complete = "current module"
-            current_module = next(
-                (m for m in modules if is_module_unlocked(student, m) and not is_module_complete(student, m)),
-                None,
+            done = 0
+            current_module = None
+            module_path = []
+            for module in modules:
+                unlocked = is_module_unlocked(student, module)
+                complete = is_module_complete(student, module) if unlocked else False
+                if complete:
+                    done += 1
+                elif unlocked and current_module is None:
+                    current_module = module
+                module_path.append({
+                    "module_id": module.id,
+                    "title": module.title,
+                    "order": module.order,
+                    "status": "done" if complete else "active" if unlocked else "locked",
+                })
+
+            current_lesson = (
+                Lesson.objects.filter(module=current_module).order_by("order").first()
+                if current_module else None
             )
             courses_data.append({
                 "course_id": enrollment.course.id,
                 "course_title": enrollment.course.title,
                 "progress_percent": round((done / total) * 100) if total else 0,
                 "current_module": current_module.title if current_module else None,
+                "current_module_id": current_module.id if current_module else None,
+                "current_lesson_id": current_lesson.id if current_lesson else None,
+                "current_lesson_title": current_lesson.title if current_lesson else None,
+                "modules": module_path,
                 "completed": done == total and total > 0,
             })
+
+        current_course = next(
+            (course for course in courses_data if not course["completed"]),
+            courses_data[0] if courses_data else None,
+        )
 
         pending_labs = Submission.objects.filter(
             student=student, status=SubmissionStatus.SUBMITTED
@@ -65,10 +92,37 @@ class StudentDashboardView(APIView):
             for s in recent_grades
         ]
 
+        deadlines = []
+        upcoming_activities = (
+            Activity.objects.filter(
+                lesson__module__course__enrollments__student=student,
+                deadline__gte=timezone.now(),
+            )
+            .exclude(completions__student=student)
+            .select_related("lesson__module__course")
+            .order_by("deadline", "id")
+            .distinct()
+        )
+        for activity in upcoming_activities:
+            if not is_module_unlocked(student, activity.lesson.module):
+                continue
+            deadlines.append({
+                "activity_id": activity.id,
+                "title": activity.title,
+                "activity_type": activity.activity_type,
+                "course_id": activity.lesson.module.course_id,
+                "course_title": activity.lesson.module.course.title,
+                "deadline": activity.deadline.isoformat(),
+            })
+            if len(deadlines) == 5:
+                break
+
         return Response({
             "enrolled_courses": courses_data,
+            "current_course": current_course,
             "pending_labs": pending_labs,
             "recent_grades": grades_data,
+            "upcoming_deadlines": deadlines,
         })
 
 
@@ -81,7 +135,7 @@ class InstructorDashboardView(APIView):
 
     def get(self, request):
         instructor = request.user
-        my_courses = Course.objects.filter(instructor=instructor)
+        my_courses = Course.objects.all() if role_of(instructor) == ADMIN else Course.objects.filter(instructor=instructor)
 
         pending_submissions = (
             Submission.objects.filter(
@@ -139,10 +193,30 @@ class AdminDashboardView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdmin]
 
     def get(self, request):
+        students = User.objects.filter(role="student").order_by("username")
+        registered_students = []
+        for student in students:
+            enrolled_courses = list(
+                student.enrollments.select_related("course").order_by("course__title").values(
+                    "course_id", "course__title"
+                )
+            )
+            registered_students.append({
+                "id": student.id,
+                "username": student.username,
+                "full_name": student.get_full_name(),
+                "email": student.email,
+                "enrolled_courses": [
+                    {"id": row["course_id"], "title": row["course__title"]}
+                    for row in enrolled_courses
+                ],
+            })
+
         return Response({
-            "total_students": User.objects.filter(role="student").count(),
+            "total_students": students.count(),
             "total_instructors": User.objects.filter(role="instructor").count(),
             "total_courses": Course.objects.count(),
             "active_enrollments": Enrollment.objects.count(),
             "pending_submissions": Submission.objects.filter(status=SubmissionStatus.SUBMITTED).count(),
+            "registered_students": registered_students,
         })

@@ -1,20 +1,78 @@
 import { useState, useRef, useEffect } from 'react'
-import { NavLink } from 'react-router-dom'
-import { Bell, ChevronDown, LogOut } from 'lucide-react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { GlobalFx, ScrollProgress } from './fx.jsx'
+import { Bell, Check, ChevronDown, LogOut, Search, SunMedium, Moon } from 'lucide-react'
 import { useAuth } from '../context/useAuth.js'
+import CommandPalette from './CommandPalette.jsx'
+import Logo from './Logo.jsx'
+import { api } from '../lib/api.js'
+
+const roleLabels = {
+  student: 'Student',
+  instructor: 'Instructor',
+  admin: 'Admin',
+}
+
+const goalLabels = {
+  student: 'Overall progress',
+  instructor: 'Cohort on track',
+  admin: 'Enrollment coverage',
+}
 
 export default function DashboardLayout({
   children,
   navItems = [],
-  brandLabel = 'Optimum ERP LMS',
-  user = { name: 'Amina Otieno' },
+  brandLabel = 'Optimum LMS',
+  user = { name: '' },
   weeklyGoal = 0,
+  role: roleProp,
 }) {
   const { logout } = useAuth()
+  // Pages don't all pass `role`; default to the signed-in user's real role (was always 'student').
+  const { auth } = useAuth()
+  const role = roleProp || auth?.role || 'student'
+  const { pathname } = useLocation()
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const [notificationsError, setNotificationsError] = useState('')
+  const [notificationReload, setNotificationReload] = useState(0)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark')
   const menuRef = useRef(null)
   const notifRef = useRef(null)
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+  }, [theme])
+
+  useEffect(() => {
+    const handler = () => setPaletteOpen(true)
+    window.addEventListener('open-command-palette', handler)
+    return () => window.removeEventListener('open-command-palette', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!notifOpen) return undefined
+    let cancelled = false
+    api.get('/engagement/notifications/')
+      .then((result) => {
+        if (cancelled) return
+        setNotifications(result.results || [])
+        setUnreadCount(result.unread_count || 0)
+      })
+      .catch((error) => {
+        if (!cancelled) setNotificationsError(error.message || 'Notifications are unavailable.')
+      })
+      .finally(() => {
+        if (!cancelled) setNotificationsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [notifOpen, notificationReload])
 
   useEffect(() => {
     function onClickOutside(e) {
@@ -25,7 +83,11 @@ export default function DashboardLayout({
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
 
-  const initials = user.name
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }
+
+  const initials = (user.name || 'User')
     .split(' ')
     .filter(Boolean)
     .slice(0, 2)
@@ -35,97 +97,214 @@ export default function DashboardLayout({
 
   const goalPercent = Math.min(100, Math.max(0, Number(weeklyGoal) || 0))
 
+  async function openNotification(notification) {
+    if (notification.unread) {
+      try {
+        const updated = await api.patch(`/engagement/notifications/${notification.id}/read/`)
+        setNotifications((items) => items.map((item) => item.id === updated.id ? { ...item, ...updated, unread: false } : item))
+        setUnreadCount((count) => Math.max(0, count - 1))
+      } catch (error) {
+        setNotificationsError(error.message || 'Unable to update notification.')
+        return
+      }
+    }
+    setNotifOpen(false)
+    if (notification.url) navigate(notification.url)
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await api.post('/engagement/notifications/read-all/')
+      setNotifications((items) => items.map((item) => ({ ...item, unread: false, read_at: item.read_at || new Date().toISOString() })))
+      setUnreadCount(0)
+    } catch (error) {
+      setNotificationsError(error.message || 'Unable to update notifications.')
+    }
+  }
+
   return (
-    <div className="flex min-h-screen bg-slate-100">
-      <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-slate-950 text-slate-200 md:flex md:flex-col">
-        <div className="flex items-center gap-3 border-b border-white/10 px-6 py-5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600 text-sm font-bold text-white shadow-lg shadow-violet-500/20">
-            O
-          </span>
-          <div className="leading-none">
-            <div className="text-base font-bold tracking-tight text-white">{brandLabel}</div>
-            <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Learning hub</div>
-          </div>
+    <div className="dashboard-shell relative flex min-h-screen overflow-visible bg-slate-100 text-slate-900" data-role={role}>
+      <div className="dg-aurora" aria-hidden="true" />
+      <ScrollProgress />
+      <GlobalFx />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+
+      {/* Left Sidebar */}
+      <aside className="dashboard-sidebar relative z-10 hidden w-62.5 shrink-0 border-r border-slate-200 bg-white text-slate-700 md:flex md:flex-col shadow-[10px_0_30px_-18px_rgba(15,23,42,0.14)]">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <Logo tone="light" height={32} />
+          {brandLabel && brandLabel !== 'Optimum LMS' && (
+            <div className="mt-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">{brandLabel}</div>
+          )}
         </div>
 
-        <nav className="flex-1 space-y-1 px-3 py-5">
+        <nav className="flex-1 space-y-1.5 px-3 py-5">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all ${
+                `flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all ${
                   isActive
-                    ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/20'
-                    : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                    ? 'bg-blue-600 text-white shadow-[0_10px_20px_-8px_rgba(37,99,235,0.7)]'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`
               }
             >
-              <item.icon size={18} strokeWidth={2} />
+              <item.icon size={18} strokeWidth={2.2} />
               {item.label}
             </NavLink>
           ))}
         </nav>
 
-        <div className="border-t border-white/10 px-4 py-4">
-          <div className="rounded-2xl bg-white/5 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Progress</p>
-            <div className="mt-3 flex items-center justify-between text-sm text-slate-200">
-              <span>Weekly goal</span>
-              <span className="font-semibold text-violet-300">{goalPercent}%</span>
+        {/* Sidebar Footer Progress & Avatar */}
+        <div className="mt-auto border-t border-slate-200 px-3 py-4">
+          <div className="mb-3 px-1">
+            <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+              <span>{goalLabels[role] || 'Progress'}</span>
+              <span className="text-slate-700">{goalPercent}%</span>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-violet-500" style={{ width: `${goalPercent}%` }} />
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+              <div
+                className="h-full rounded-full bg-linear-to-r from-blue-500 to-emerald-400 transition-[width] duration-700"
+                style={{ width: `${goalPercent}%` }}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl bg-slate-100 p-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-linear-to-tr from-blue-600 to-blue-600 text-xs font-bold text-white shadow-sm">
+              {initials.slice(0, 2)}
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
+              <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{roleLabels[role] || 'User'}</div>
             </div>
           </div>
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Welcome back</p>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">{user.name.split(' ')[0]}</h1>
+      {/* Main Area */}
+      <div className="dashboard-content relative z-0 flex flex-1 flex-col bg-slate-100">
+        <header className="dashboard-header relative z-50 flex items-center justify-between border-b border-slate-200 bg-white/90 px-5 py-3 backdrop-blur-md">
+          {/* Left: Quick Search */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-xs text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+            >
+              <Search size={14} />
+              <span className="hidden sm:inline">Search courses, labs...</span>
+              <kbd className="hidden sm:inline rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">⌘K</kbd>
+            </button>
           </div>
 
-          <div className="flex items-center gap-5">
+          {/* Right: Theme, Notifications, Profile */}
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+              aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            >
+              {theme === 'dark' ? <SunMedium size={16} /> : <Moon size={16} />}
+            </button>
+
+            {/* Notifications */}
             <div className="relative" ref={notifRef}>
               <button
-                onClick={() => setNotifOpen((v) => !v)}
-                className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-violet-200 hover:text-violet-700"
+                type="button"
+                onClick={() => {
+                  if (!notifOpen) {
+                    setNotificationsLoading(true)
+                    setNotificationsError('')
+                  }
+                  setNotifOpen((value) => !value)
+                }}
+                className="relative flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Notifications"
                 aria-expanded={notifOpen}
               >
-                <Bell size={18} strokeWidth={2} />
+                <Bell size={16} />
+                {unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-rose-600 px-1 text-[9px] font-bold text-white" aria-label={`${unreadCount} unread`}>
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </button>
+
               {notifOpen && (
-                <div className="absolute right-0 z-10 mt-2 w-56 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-500 shadow-xl">
-                  No new notifications.
+                <div className="absolute right-0 z-60 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700 shadow-2xl backdrop-blur-xl">
+                  <div className="mb-2 flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Notifications</span>
+                    {unreadCount > 0 && (
+                      <button type="button" onClick={markAllNotificationsRead} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:text-blue-900">
+                        <Check size={13} aria-hidden="true" /> Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {notificationsLoading && (
+                      <p className="px-4 py-6 text-center text-sm text-slate-500" role="status">Loading notifications...</p>
+                    )}
+                    {!notificationsLoading && notificationsError && (
+                      <div className="px-3 py-4 text-center" role="alert">
+                        <p className="text-xs text-rose-700">{notificationsError}</p>
+                        <button type="button" onClick={() => { setNotificationsLoading(true); setNotificationsError(''); setNotificationReload((value) => value + 1) }} className="mt-2 text-xs font-semibold text-blue-700">Retry</button>
+                      </div>
+                    )}
+                    {!notificationsLoading && !notificationsError && notifications.length === 0 && (
+                      <p className="px-4 py-6 text-center text-sm text-slate-500">You’re all caught up.</p>
+                    )}
+                    {!notificationsLoading && !notificationsError && notifications.map((notification) => (
+                      <button
+                        type="button"
+                        key={notification.id}
+                        onClick={() => openNotification(notification)}
+                        className={`block w-full rounded-xl border p-2.5 text-left transition hover:bg-slate-100 ${notification.unread ? 'border-blue-200 bg-blue-50/70' : 'border-slate-200 bg-slate-50'}`}
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-900">{notification.title}</span>
+                          {notification.unread && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" aria-label="Unread" />}
+                          <time className="shrink-0 text-[10px] text-slate-500" dateTime={notification.created_at}>{new Date(notification.created_at).toLocaleDateString()}</time>
+                        </span>
+                        <span className="mt-0.5 block text-xs text-slate-600">{notification.message}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="relative" ref={menuRef}>
+            {/* User Profile Menu */}
+            <div className="relative z-70" ref={menuRef}>
               <button
+                type="button"
                 onClick={() => setMenuOpen((v) => !v)}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 transition hover:border-violet-300"
+                className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 transition hover:bg-slate-100"
                 aria-expanded={menuOpen}
-                aria-haspopup="true"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-xs font-bold text-white">
-                  {initials}
+                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-linear-to-tr from-blue-600 to-blue-600 text-[10px] font-bold text-white">
+                  {initials.slice(0, 2)}
                 </span>
-                <span className="text-sm font-semibold text-slate-700">{user.name}</span>
-                <ChevronDown size={16} className="text-slate-400" />
+                <span className="hidden text-xs font-semibold text-slate-700 sm:inline">{user.name}</span>
+                <ChevronDown size={14} className="text-slate-500" />
               </button>
+
               {menuOpen && (
-                <div className="absolute right-0 z-10 mt-2 w-44 rounded-2xl border border-slate-200 bg-white py-1 shadow-xl">
+                <div className="absolute right-0 z-80 mt-2 w-48 rounded-2xl border border-slate-200 bg-white py-1.5 shadow-2xl backdrop-blur-xl">
+                  <div className="border-b border-slate-200 px-3 py-2 text-xs">
+                    <div className="font-bold text-slate-900">{user.name}</div>
+                    <div className="text-[10px] capitalize text-slate-500">{role} Account</div>
+                  </div>
                   <button
+                    type="button"
                     onClick={logout}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
                   >
-                    <LogOut size={16} /> Log out
+                    <LogOut size={14} /> Log out
                   </button>
                 </div>
               )}
@@ -133,7 +312,7 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <main className="flex-1 p-5 md:p-7">{children}</main>
+        <main key={pathname} className="dashboard-main dg-page relative z-0 flex-1 bg-slate-50 p-4 md:p-6">{children}</main>
       </div>
     </div>
   )

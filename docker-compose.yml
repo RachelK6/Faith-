@@ -1,0 +1,53 @@
+# Frontend + Django API + isolated code runner in containers.
+# SQL Server stays external so database data survives container rebuilds.
+#
+#   cp backend/.env.docker.example backend/.env.docker   # configure app/database secrets
+#   docker compose up --build
+services:
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    volumes:
+      - media:/media:ro
+    depends_on: [backend]
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env.docker        # secrets live here (git-ignored), not in the image
+    environment:
+      SANDBOX_URL: http://sandbox:9000
+      NUM_PROXIES: "1"   # nginx is one proxy: without this every user shares nginx's IP and the 10/min login throttle locks everyone out
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN}   # same value the sandbox service gets
+      MSSQL_DB_HOST: ${MSSQL_DB_HOST:-host.docker.internal}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - media:/app/media
+    networks: [default, runner_net]
+    depends_on: [sandbox]
+
+  sandbox:
+    build: ./sandbox
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?set SANDBOX_TOKEN in your shell or a compose .env file}
+    networks: [runner_net]                  # internal-only network: no route to the internet or the DB
+    read_only: true
+    tmpfs: ["/tmp:size=64m,noexec,nosuid"]  # scratch space for run directories; nothing in it can be executed
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 128
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9000/health',timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    # no `ports:` — only the backend can reach it
+
+networks:
+  runner_net:
+    internal: true
+
+volumes:
+  media:

@@ -2,6 +2,12 @@ from django.conf import settings
 from django.db import models
 
 from apps.courses.models import Activity
+from .validators import validate_submission_file
+
+
+def submission_upload_path(instance, filename):
+    # Grouped by activity/student so files are easy to audit and clean up.
+    return f"submissions/activity_{instance.activity_id}/student_{instance.student_id}/{filename}"
 
 
 class SubmissionStatus(models.TextChoices):
@@ -17,7 +23,9 @@ class Submission(models.Model):
     activity = models.ForeignKey(Activity, on_delete=models.CASCADE, related_name="submissions")
 
     content = models.TextField(blank=True, help_text="Pasted code / written answer")
-    file = models.FileField(upload_to="submissions/", blank=True, null=True)
+    file = models.FileField(
+        upload_to=submission_upload_path, blank=True, null=True, validators=[validate_submission_file]
+    )
     github_url = models.URLField(blank=True)
 
     attempt_number = models.PositiveIntegerField(default=1)

@@ -1,37 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Helmet } from 'react-helmet-async'
 import {
-  AlertTriangle,
-  ArrowRight,
+  TriangleAlert,
   BookOpen,
-  CalendarRange,
-  CheckCircle2,
   FileCheck,
-  Gauge,
   LayoutDashboard,
-  LogOut,
-  Sparkles,
+  Award,
+  ShieldAlert,
   Users,
-  Zap,
 } from 'lucide-react'
 
-function TrendBars({ values = [58, 66, 73, 82, 88, 94] }) {
-  return (
-    <div className="metric-bars" aria-label="Cohort performance trend">
-      {values.map((value, index) => (
-        <span
-          key={index}
-          className="metric-bar"
-          style={{ height: `${value}%` }}
-          title={`Week ${index + 1}: ${value}%`}
-        />
-      ))}
-    </div>
-  )
-}
 import DashboardLayout from '../components/DashboardLayout.jsx'
+import GradeModal from '../components/GradeModal.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
+import { useToast } from '../hooks/useToast.js'
+import { getCohortRisk } from '../api/risk.js'
+import {
+  Card, Donut, DonutLegend, Avatar, Pill, Skeleton, ErrorState, EmptyState,
+} from '../components/charts.jsx'
+import { HeroTitle, CountUp } from '../components/fx.jsx'
 
 const navItems = [
   { to: '/dashboard/instructor', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -40,281 +29,389 @@ const navItems = [
   { to: '/dashboard/instructor/students', label: 'Students', icon: Users },
 ]
 
-export default function InstructorDashboard() {
-  const { auth, logout } = useAuth()
-  const [data, setData] = useState(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [gradingId, setGradingId] = useState(null)
+const RISK_TONE = { high: 'r', medium: 'y', low: 'g' }
 
-  function loadDashboard() {
-    api
-      .get('/dashboard/instructor/')
-      .then(setData)
-      .catch((err) => setError(err.message))
+export default function InstructorDashboard() {
+  const navigate = useNavigate()
+  const { auth } = useAuth()
+  const toast = useToast()
+  const [me, setMe] = useState(null)
+  const [data, setData] = useState(null)
+  const [risk, setRisk] = useState(null)
+  const [error, setError] = useState('')
+  const [riskError, setRiskError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [grading, setGrading] = useState(null)
+  const [certificateCourseId, setCertificateCourseId] = useState('')
+  const [certificateStudents, setCertificateStudents] = useState([])
+  const [certificates, setCertificates] = useState([])
+  const [certificateStudentId, setCertificateStudentId] = useState('')
+  const [revocationReasons, setRevocationReasons] = useState({})
+  const [certificateError, setCertificateError] = useState('')
+  const [certificateLoading, setCertificateLoading] = useState(true)
+  const [certificateReload, setCertificateReload] = useState(0)
+
+  function fetchAll() {
+    Promise.all([api.get('/dashboard/instructor/'), api.me().catch(() => null)])
+      .then(([dash, meData]) => {
+        setData(dash)
+        setMe(meData)
+      })
+      .catch((err) => {
+        setData(null)
+        setError(err.message || 'Unable to load instructor data.')
+      })
       .finally(() => setLoading(false))
+
+    getCohortRisk()
+      .then((result) => {
+        setRisk(result)
+        setRiskError('')
+      })
+      .catch((err) => {
+        setRisk(null)
+        setRiskError(err.message || 'Unable to load cohort risk data.')
+      })
+  }
+
+  function load() {
+    setLoading(true)
+    setError('')
+    setRiskError('')
+    fetchAll()
   }
 
   useEffect(() => {
-    loadDashboard()
+    fetchAll()
   }, [])
 
-  async function handleGrade(submissionId) {
-    const grade = window.prompt('Grade (0–10):')
-    if (grade === null) return
-    const feedback = window.prompt('Feedback (optional):') || ''
+  const selectedCertificateCourse = certificateCourseId || String(data?.my_courses?.[0]?.id || '')
 
-    setGradingId(submissionId)
-    try {
-      await api.patch(`/submissions/${submissionId}/grade/`, {
-        grade: Number(grade),
-        feedback,
+  useEffect(() => {
+    if (!selectedCertificateCourse) return undefined
+    let cancelled = false
+    Promise.all([
+      api.get(`/enrollments/?course=${selectedCertificateCourse}`),
+      api.get(`/engagement/certificates/?course_id=${selectedCertificateCourse}`),
+    ])
+      .then(([enrollments, rows]) => {
+        if (cancelled) return
+        setCertificateStudents(enrollments)
+        setCertificates(rows)
+        setCertificateStudentId((current) => enrollments.some((item) => String(item.student) === current)
+          ? current
+          : String(enrollments[0]?.student || ''))
       })
-      loadDashboard()
+      .catch((err) => {
+        if (!cancelled) setCertificateError(err.message || 'Unable to load course certificates.')
+      })
+      .finally(() => {
+        if (!cancelled) setCertificateLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [selectedCertificateCourse, certificateReload])
+
+  const displayName = me ? (`${me.first_name} ${me.last_name}`.trim() || me.username) : (auth?.email || 'there')
+
+  const riskCounts = useMemo(() => {
+    if (!risk?.scored) return null
+    return {
+      high: risk.scored.filter((s) => s.risk_level === 'high').length,
+      medium: risk.scored.filter((s) => s.risk_level === 'medium').length,
+      low: risk.scored.filter((s) => s.risk_level === 'low').length,
+    }
+  }, [risk])
+
+  async function submitGrade(score, feedback) {
+    if (!grading) return
+    try {
+      await api.patch(`/submissions/${grading.submission_id}/grade/`, { grade: score, feedback })
+      toast(`Graded ${grading.student}: ${score}/100`)
+      setGrading(null)
+      load()
     } catch (err) {
-      alert(`Couldn't grade this submission: ${err.message}`)
-    } finally {
-      setGradingId(null)
+      toast(`Couldn't grade this submission: ${err.message}`)
     }
   }
 
-  const cohortHealth = useMemo(() => {
-    if (!data) return 0
-    const total = Math.max(data.pending_submission_count + data.students_falling_behind.length, 1)
-    return Math.max(35, Math.min(98, 100 - Math.round((data.students_falling_behind.length / total) * 35) - Math.round((data.pending_submission_count / Math.max(total, 1)) * 15)))
-  }, [data])
-
-  const riskTrend = useMemo(() => {
-    if (!data) return 0
-    return Math.max(10, Math.min(92, 100 - data.pending_submission_count * 4 - data.students_falling_behind.length * 6))
-  }, [data])
-
-  const trendValues = useMemo(() => {
-    if (!data) return [49, 63, 71, 79, 85, 86]
-    const base = Math.max(42, Math.min(98, cohortHealth))
-    return [
-      Math.max(30, base - 24),
-      Math.max(36, base - 16),
-      Math.max(42, base - 10),
-      Math.max(48, base - 5),
-      Math.max(54, base + 3),
-      Math.max(58, base),
-    ]
-  }, [cohortHealth, data])
-
-  const aiInsightMessage = useMemo(() => {
-    if (!data) return 'The cohort is stable and ready for the next learning cycle.'
-    if (data.students_falling_behind.length > 0) {
-      return `${data.students_falling_behind.length} learner${data.students_falling_behind.length > 1 ? 's are' : ' is'} now behind pace. Send a check-in and keep the review queue tight.`
+  async function issueCertificate() {
+    try {
+      setCertificateLoading(true)
+      setCertificateError('')
+      await api.post('/engagement/certificates/issue/', {
+        course_id: Number(selectedCertificateCourse),
+        student_id: Number(certificateStudentId),
+      })
+      toast('Certificate issued.')
+      setCertificateReload((value) => value + 1)
+    } catch (err) {
+      setCertificateLoading(false)
+      setCertificateError(err.message || 'Unable to issue certificate.')
     }
-    if (data.pending_submission_count > 0) {
-      return `${data.pending_submission_count} submission${data.pending_submission_count > 1 ? 's are' : ' is'} awaiting review. The cohort is healthy, but the queue needs a quick pass.`
+  }
+
+  async function revokeCertificate(certificate) {
+    const reason = revocationReasons[certificate.certificate_number]?.trim()
+    if (!reason) {
+      setCertificateError('Enter a reason before revoking a certificate.')
+      return
     }
-    return 'The cohort is stable and ready for the next learning cycle. Keep assignments focused and keep momentum steady.'
-  }, [data])
+    try {
+      setCertificateLoading(true)
+      setCertificateError('')
+      await api.post(`/engagement/certificates/${certificate.certificate_number}/revoke/`, { reason })
+      toast(`Certificate for ${certificate.student_name} revoked.`)
+      setRevocationReasons((current) => ({ ...current, [certificate.certificate_number]: '' }))
+      setCertificateReload((value) => value + 1)
+    } catch (err) {
+      setCertificateLoading(false)
+      setCertificateError(err.message || 'Unable to revoke certificate.')
+    }
+  }
 
   return (
-    <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Instructor' }} weeklyGoal={cohortHealth}>
+    <DashboardLayout navItems={navItems} user={{ name: displayName }} weeklyGoal={riskCounts ? 100 - Math.round((riskCounts.high / Math.max(1, riskCounts.high + riskCounts.medium + riskCounts.low)) * 100) : 0} role={auth?.role === 'admin' ? 'admin' : 'instructor'}>
       <Helmet>
         <meta name="robots" content="noindex, nofollow" />
       </Helmet>
 
-      <div className="space-y-6">
-        {loading && <div className="rounded-[24px] border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">Loading your dashboard…</div>}
-
-        {error && (
-          <div className="rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            Couldn't load your dashboard: {error}
-          </div>
-        )}
+      <div className="space-y-6" data-role="instructor">
+        {loading && <Skeleton height={220} />}
+        {error && <ErrorState message={`Couldn't load your dashboard: ${error}`} onRetry={load} />}
 
         {data && (
           <>
-            <div className="rounded-[30px] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.16),_transparent_35%),white] p-6 shadow-sm">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-600">Instructor overview</p>
-                  <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-900">Your cohort is moving.</h2>
-                </div>
-                <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700">
-                  <CheckCircle2 size={14} />
-                  {data.pending_submission_count} items need attention
+            <div className="dg-hero">
+              <i className="dg-orb dg-o1" />
+              <i className="dg-orb dg-o2" />
+              <div className="dg-grow">
+                <div className="dg-day">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+                <HeroTitle text={`Good ${new Date().getHours() < 18 ? 'day' : 'evening'}, ${displayName.split(' ')[0]}.`} />
+                <p>
+                  Teaching {data.my_courses.length} course{data.my_courses.length === 1 ? '' : 's'}. {data.pending_submission_count} submission{data.pending_submission_count === 1 ? '' : 's'} waiting
+                  {risk?.scored?.length ? `, ${riskCounts.high} flagged high-risk by the early warning model.` : '.'}
+                </p>
+                <div className="dg-bt">
+                  <button type="button" className="dg-btn" onClick={() => navigate('/dashboard/instructor/content')}>
+                    <BookOpen size={15} aria-hidden="true" /> Build a course
+                  </button>
+                  <button type="button" className="dg-btn" onClick={() => document.getElementById('grading-queue')?.scrollIntoView({ behavior: 'smooth' })}>
+                    Start grading
+                  </button>
+                  <button type="button" className="dg-btn dg-ghost" onClick={() => document.getElementById('risk-table')?.scrollIntoView({ behavior: 'smooth' })}>
+                    View at-risk students
+                  </button>
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <a href="/dashboard/instructor/content" className="quick-action primary">
-                <span className="quick-icon"><BookOpen size={18} /></span>
-                <span>
-                  <strong>Courses</strong>
-                  <small>Manage content</small>
-                </span>
-                <ArrowRight size={16} />
-              </a>
-
-              <a href="/dashboard/instructor/submissions" className="quick-action">
-                <span className="quick-icon"><FileCheck size={18} /></span>
-                <span>
-                  <strong>Review</strong>
-                  <small>Grade work</small>
-                </span>
-                <ArrowRight size={16} />
-              </a>
-
-              <a href="/dashboard/instructor/students" className="quick-action">
-                <span className="quick-icon"><Users size={18} /></span>
-                <span>
-                  <strong>Students</strong>
-                  <small>Track progress</small>
-                </span>
-                <ArrowRight size={16} />
-              </a>
-
-              <a href="/dashboard/instructor" className="quick-action accent">
-                <span className="quick-icon"><Sparkles size={18} /></span>
-                <span>
-                  <strong>AI recap</strong>
-                  <small>Insights</small>
-                </span>
-                <ArrowRight size={16} />
-              </a>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Pending</p>
-                  <FileCheck size={18} className="text-violet-600" />
-                </div>
-                <p className="mt-4 text-3xl font-black text-slate-900">{data.pending_submission_count}</p>
-                <p className="mt-2 text-sm text-slate-500">Submissions to review</p>
+            <div className="dg-grid">
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><BookOpen /></span>
+                <div className="dg-l">My courses</div>
+                <div className="dg-v"><CountUp value={data.my_courses.length} /></div>
+                <div className="dg-d">Active this term</div>
               </div>
-
-              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Flagged</p>
-                  <AlertTriangle size={18} className="text-amber-500" />
-                </div>
-                <p className="mt-4 text-3xl font-black text-slate-900">{data.students_falling_behind.length}</p>
-                <p className="mt-2 text-sm text-slate-500">Students falling behind</p>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><FileCheck /></span>
+                <div className="dg-l">Pending reviews</div>
+                <div className="dg-v"><CountUp value={data.pending_submission_count} /></div>
+                <div className={`dg-d${data.pending_submission_count > 0 ? ' dg-w' : ''}`}>{data.pending_submission_count > 0 ? 'Needs attention' : 'All graded'}</div>
               </div>
-
-              <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Courses</p>
-                  <BookOpen size={18} className="text-emerald-600" />
-                </div>
-                <p className="mt-4 text-3xl font-black text-slate-900">{data.my_courses.length}</p>
-                <p className="mt-2 text-sm text-slate-500">Active course list</p>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><TriangleAlert /></span>
+                <div className="dg-l">Inactive 7+ days</div>
+                <div className="dg-v"><CountUp value={data.students_falling_behind.length} /></div>
+                <div className="dg-d">Quick activity signal</div>
+              </div>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><ShieldAlert /></span>
+                <div className="dg-l">High risk (model)</div>
+                <div className={`dg-v`}><CountUp value={riskCounts ? riskCounts.high : '—'} /></div>
+                <div className={`dg-d${riskCounts?.high ? ' dg-w' : ''}`}>{riskCounts ? 'From the early warning classifier' : 'Loading…'}</div>
               </div>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm floating-card">
-                <div className="mb-5 flex items-center justify-between gap-3">
-                  <h3 className="text-xl font-bold tracking-tight text-slate-900">Submissions to review</h3>
-                  <span className="rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-700">
-                    {data.pending_submissions.length} waiting
-                  </span>
-                </div>
-
-                {data.pending_submissions.length === 0 ? (
-                  <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
-                    Nothing pending right now — you’re caught up.
-                  </div>
+            <div className="dg-grid">
+              <Card span={4}>
+                <h3>Cohort risk breakdown</h3>
+                <div className="dg-sub">Early Warning Risk Classifier</div>
+                {riskError && <ErrorState message={riskError} onRetry={load} />}
+                {!riskError && !riskCounts && <Skeleton height={150} />}
+                {riskCounts && (riskCounts.high + riskCounts.medium + riskCounts.low === 0 ? (
+                  <EmptyState message="No students have enough weekly history to score yet." />
                 ) : (
-                  <div className="space-y-3">
-                    {data.pending_submissions.map((s) => (
-                      <div key={s.submission_id} className="flex flex-col gap-3 rounded-[22px] border border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-900">{s.student}</p>
-                          <p className="mt-1 text-sm text-slate-600">{s.activity}</p>
-                          <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">{s.course}</p>
-                        </div>
-                        <button
-                          onClick={() => handleGrade(s.submission_id)}
-                          disabled={gradingId === s.submission_id}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {gradingId === s.submission_id ? 'Saving…' : 'Grade'}
-                          {!gradingId && <ArrowRight size={15} />}
-                        </button>
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <Donut
+                        slices={[
+                          { label: 'High risk', value: riskCounts.high, color: 'var(--bad)' },
+                          { label: 'Medium', value: riskCounts.medium, color: 'var(--warn)' },
+                          { label: 'On track', value: riskCounts.low, color: 'var(--ok)' },
+                        ]}
+                      />
+                    </div>
+                    <DonutLegend slices={[
+                      { label: 'High risk', value: riskCounts.high, color: 'var(--bad)' },
+                      { label: 'Medium', value: riskCounts.medium, color: 'var(--warn)' },
+                      { label: 'On track', value: riskCounts.low, color: 'var(--ok)' },
+                    ]} />
+                  </>
+                ))}
+              </Card>
+
+              <div className="dg-card dg-c8" id="risk-table">
+                <h3>Early warning — who needs a check-in</h3>
+                <div className="dg-sub">Experimental signal trained on synthetic data; use as a review aid, not a decision — highest risk first</div>
+                {riskError && <ErrorState message={riskError} onRetry={load} />}
+                {!riskError && !risk && <Skeleton height={200} />}
+                {risk?.scored?.length === 0 && <EmptyState message="Nobody has enough weekly history to score yet — check back after a couple of weeks of activity." />}
+                {risk?.scored?.slice(0, 8).map((s) => (
+                  <div key={`${s.student_id}-${s.course_id}`} className="dg-row" style={{ alignItems: 'flex-start' }}>
+                    <Avatar name={s.student_name || String(s.student_id)} />
+                    <div className="dg-g">
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <b>{s.student_name || `Student ${s.student_id}`}</b>
+                        <Pill tone={RISK_TONE[s.risk_level]} pulse={s.risk_level === 'high'}>{s.risk_level} risk · health {s.student_health_score}</Pill>
+                        {s.course_title && <span className="dg-sub" style={{ margin: 0 }}>{s.course_title}</span>}
                       </div>
-                    ))}
+                      {s.top_factors?.length > 0 && (
+                        <small>{s.top_factors.join(' · ')}</small>
+                      )}
+                      <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--acc)' }}>{s.recommended_action}</p>
+                    </div>
                   </div>
-                )}
-              </div>
-
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm floating-card">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold tracking-tight text-slate-900">Need attention</h3>
-                  <Zap size={18} className="text-amber-500" />
-                </div>
-
-                <div className="mt-5 rounded-[22px] border border-violet-100 bg-[linear-gradient(135deg,_rgba(139,92,246,0.08),_rgba(59,130,246,0.06))] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-700">AI insight</p>
-                    <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-700">
-                      {riskTrend}% cohort health
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">
-                    {aiInsightMessage}
+                ))}
+                {risk?.skipped_insufficient_history?.length > 0 && (
+                  <p className="dg-sub" style={{ marginTop: 10 }}>
+                    {risk.skipped_insufficient_history.length} more student(s) don't have enough weekly history yet to score.
                   </p>
-
-                  <div className="mt-4">
-                    <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      <span>Momentum</span>
-                      <span>{cohortHealth}%</span>
-                    </div>
-                    <TrendBars values={trendValues} />
-                  </div>
-                </div>
-
-                {data.students_falling_behind.length === 0 ? (
-                  <p className="mt-4 text-sm text-slate-500">No students are currently flagged.</p>
-                ) : (
-                  <div className="mt-4 space-y-4">
-                    {data.students_falling_behind.map((s, i) => (
-                      <div key={i} className="flex items-start gap-3 rounded-[20px] border border-amber-100 bg-amber-50 p-3">
-                        <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
-                        <div>
-                          <p className="font-semibold text-slate-900">{s.student}</p>
-                          <p className="text-xs text-slate-500">{s.course}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
                 )}
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-xl font-bold tracking-tight text-slate-900">My courses</h3>
-              {data.my_courses.length === 0 ? (
-                <p className="mt-4 text-sm text-slate-500">You haven’t created a course yet.</p>
-              ) : (
-                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {data.my_courses.map((c) => (
-                    <div key={c.id} className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-violet-600">Course</div>
-                      <h4 className="mt-3 text-lg font-bold text-slate-900">{c.title}</h4>
-                    </div>
-                  ))}
+            <Card span={12}>
+              <h3>Students falling behind</h3>
+              <div className="dg-sub">No completed activity in the last 7 days — a simpler, immediate signal alongside the risk model above</div>
+              {data.students_falling_behind.length === 0 && <EmptyState message="Nobody — everyone's been active this week." />}
+              {data.students_falling_behind.map((s, i) => (
+                <div key={i} className="dg-row">
+                  <Avatar name={s.student} />
+                  <div className="dg-g">
+                    <b>{s.student}</b>
+                    <small>{s.course}</small>
+                  </div>
+                  <Pill tone="y">Inactive 7d+</Pill>
                 </div>
+              ))}
+            </Card>
+
+            <Card span={12} className="" style={{}}>
+              <div id="grading-queue" />
+              <h3>Grading queue</h3>
+              <div className="dg-sub">Oldest first</div>
+              {data.pending_submissions.length === 0 && <EmptyState message="Nothing waiting for review." />}
+              {data.pending_submissions.map((s) => (
+                <div key={s.submission_id} className="dg-row">
+                  <Avatar name={s.student} />
+                  <div className="dg-g">
+                    <b>{s.student}</b>
+                    <small>{s.activity} · {s.course} · submitted {new Date(s.submitted_at).toLocaleDateString()}</small>
+                  </div>
+                  <button className="dg-gb" onClick={() => setGrading(s)}>Grade</button>
+                </div>
+              ))}
+            </Card>
+
+            <section className="dg-card rounded-2xl p-5 sm:p-6" aria-labelledby="certificate-management-heading">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 id="certificate-management-heading" className="text-base font-bold text-white">Certificates</h2>
+                  <p className="dg-sub mt-1">Issue after course completion or revoke with a recorded reason.</p>
+                </div>
+                {data.my_courses.length > 0 && (
+                  <label className="grid gap-1 text-xs font-semibold text-slate-300">
+                    Course
+                    <select
+                      value={selectedCertificateCourse}
+                      onChange={(event) => { setCertificateLoading(true); setCertificateError(''); setCertificateCourseId(event.target.value) }}
+                      className="min-w-52 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white lms-focus-ring"
+                    >
+                      {data.my_courses.map((course) => <option key={course.id} value={course.id}>{course.title}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {certificateError && <p className="mt-4 text-sm text-rose-300" role="alert">{certificateError}</p>}
+              {!data.my_courses.length && <p className="mt-4 text-sm text-slate-400">Create a course before managing certificates.</p>}
+              {data.my_courses.length > 0 && (
+                <>
+                  <form className="mt-5 flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); issueCertificate() }}>
+                    <label className="grid min-w-56 flex-1 gap-1 text-xs font-semibold text-slate-300">
+                      Enrolled student
+                      <select
+                        value={certificateStudentId}
+                        onChange={(event) => setCertificateStudentId(event.target.value)}
+                        disabled={!certificateStudents.length || certificateLoading}
+                        className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white lms-focus-ring disabled:opacity-50"
+                      >
+                        {certificateStudents.length ? certificateStudents.map((student) => (
+                          <option key={student.student} value={student.student}>{student.student_name || student.student_email}</option>
+                        )) : <option value="">No enrolled students</option>}
+                      </select>
+                    </label>
+                    <button type="submit" disabled={!certificateStudentId || certificateLoading} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 lms-focus-ring disabled:opacity-50">
+                      <Award size={15} aria-hidden="true" /> Issue certificate
+                    </button>
+                  </form>
+                  {certificateLoading ? <p className="mt-5 text-sm text-slate-400" role="status">Loading certificates...</p> : certificates.length ? (
+                    <ul className="mt-5 divide-y divide-slate-700">
+                      {certificates.map((certificate) => (
+                        <li key={certificate.certificate_number} className="py-4 first:pt-0 last:pb-0">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-white">{certificate.student_name}</p>
+                              <p className="mt-1 text-xs text-slate-400">{certificate.status === 'issued' ? 'Issued' : 'Revoked'} · {new Date(certificate.issued_at).toLocaleDateString()} · {certificate.certificate_number}</p>
+                              {certificate.status === 'revoked' && <p className="mt-1 text-xs text-amber-200">Reason: {certificate.revocation_reason}</p>}
+                            </div>
+                          </div>
+                          {certificate.status === 'issued' && (
+                            <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); revokeCertificate(certificate) }}>
+                              <label className="grid min-w-56 flex-1 gap-1 text-xs font-semibold text-slate-400">
+                                Revocation reason
+                                <input
+                                  value={revocationReasons[certificate.certificate_number] || ''}
+                                  maxLength={500}
+                                  onChange={(event) => setRevocationReasons((current) => ({ ...current, [certificate.certificate_number]: event.target.value }))}
+                                  className="rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white lms-focus-ring"
+                                  required
+                                />
+                              </label>
+                              <button type="submit" className="rounded-lg border border-rose-400/50 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-950/40 lms-focus-ring">Revoke</button>
+                            </form>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-5 text-sm text-slate-400" role="status">No certificates for this course yet.</p>
+                  )}
+                </>
               )}
-            </div>
+            </section>
           </>
         )}
 
-        <button
-          onClick={logout}
-          className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-violet-700"
-        >
-          <LogOut size={16} /> Log out
-        </button>
       </div>
+
+      <GradeModal
+        open={!!grading}
+        onClose={() => setGrading(null)}
+        studentName={grading?.student}
+        assignmentTitle={grading ? `${grading.activity} · ${grading.course}` : ''}
+        maxScore={100}
+        onSubmit={submitGrade}
+      />
     </DashboardLayout>
   )
 }

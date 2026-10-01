@@ -6,239 +6,265 @@ import {
   ArrowRight,
   BookOpen,
   Briefcase,
+  ExternalLink,
   Gauge,
   LayoutDashboard,
-  RefreshCcw,
-  ShieldCheck,
-  Sparkles,
   Users,
-  Zap,
 } from 'lucide-react'
 
-function TrendBars({ values = [54, 62, 68, 74, 82, 88] }) {
-  return (
-    <div className="metric-bars" aria-label="Platform momentum trend">
-      {values.map((value, index) => (
-        <span
-          key={index}
-          className="metric-bar"
-          style={{ height: `${value}%` }}
-          title={`Week ${index + 1}: ${value}%`}
-        />
-      ))}
-    </div>
-  )
-}
 import DashboardLayout from '../components/DashboardLayout.jsx'
 import { api } from '../lib/api.js'
 import { useAuth } from '../context/useAuth.js'
+import { djangoAdminUrl } from '../api/adminDashboard.js'
+import { getAllocationPlan } from '../api/allocation.js'
+import {
+  Card, Donut, DonutLegend, Pill, Skeleton, ErrorState, EmptyState,
+} from '../components/charts.jsx'
+import { HeroTitle, CountUp } from '../components/fx.jsx'
 
 const navItems = [
   { to: '/dashboard/admin', label: 'Overview', icon: LayoutDashboard, end: true },
-  { to: '/dashboard/admin', label: 'Platform health', icon: ShieldCheck },
+  { to: '/dashboard/instructor', label: 'Courses & content', icon: BookOpen },
+  { to: '/dashboard/instructor/students', label: 'Students', icon: Users },
 ]
+
+const PRIORITY_TONE = { high: 'r', medium: 'y', low: 'default' }
 
 export default function AdminDashboard() {
   const { auth } = useAuth()
   const navigate = useNavigate()
   const [data, setData] = useState(null)
+  const [plan, setPlan] = useState(null)
   const [error, setError] = useState('')
+  const [planError, setPlanError] = useState('')
   const [loading, setLoading] = useState(true)
 
-  function loadDashboard() {
-    setLoading(true)
+  function fetchAll() {
     api
       .get('/dashboard/admin/')
       .then(setData)
-      .catch((err) => setError(err.message))
+      .catch((err) => {
+        setData(null)
+        setError(err.message || 'Unable to load platform data.')
+      })
       .finally(() => setLoading(false))
+
+    getAllocationPlan()
+      .then(setPlan)
+      .catch((err) => {
+        setPlan(null)
+        setPlanError(err.message || 'Unable to load resource allocation data.')
+      })
+  }
+
+  function load() {
+    setLoading(true)
+    setError('')
+    setPlanError('')
+    fetchAll()
   }
 
   useEffect(() => {
-    loadDashboard()
+    fetchAll()
   }, [])
 
   const quickActions = [
     { label: 'Students', subtitle: 'Monitor learners', href: '/dashboard/instructor/students', icon: Users },
-    { label: 'Instructors', subtitle: 'Manage faculty', href: '/dashboard/instructor', icon: Briefcase },
     { label: 'Courses', subtitle: 'Review catalog', href: '/dashboard/instructor/content', icon: BookOpen },
-    { label: 'Submissions', subtitle: 'Handle review queue', href: '/dashboard/instructor/submissions', icon: Briefcase },
+    { label: 'Submissions', subtitle: 'Review queue', href: '/dashboard/instructor/submissions', icon: Briefcase },
   ]
 
-  const studentToInstructorRatio = data
-    ? (data.total_students / Math.max(data.total_instructors, 1)).toFixed(1)
-    : '0.0'
-
-  const platformHealth = useMemo(() => {
-    if (!data) return 0
-    const pendingRatio = data.pending_submissions / Math.max(data.total_students || 1, 1)
-    const enrollmentCoverage = Math.min(100, Math.round((data.active_enrollments / Math.max(data.total_students, 1)) * 100))
-    return Math.max(35, Math.min(98, Math.round((enrollmentCoverage + (100 - pendingRatio * 100)) / 2)))
+  const enrollmentCoverage = useMemo(() => {
+    if (!data || !data.total_students) return null
+    return Math.min(100, Math.round((data.active_enrollments / data.total_students) * 100))
   }, [data])
 
-  const trendValues = useMemo(() => {
-    if (!data) return [51, 60, 68, 76, 81, 88]
-    const base = Math.max(40, Math.min(98, platformHealth))
-    return [
-      Math.max(28, base - 22),
-      Math.max(34, base - 15),
-      Math.max(40, base - 9),
-      Math.max(46, base - 4),
-      Math.max(52, base + 2),
-      Math.max(58, base),
-    ]
-  }, [data, platformHealth])
-
   return (
-    <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Administrator' }} weeklyGoal={platformHealth}>
+    <DashboardLayout navItems={navItems} user={{ name: auth?.email || 'Admin' }} weeklyGoal={enrollmentCoverage ?? 0} role="admin">
       <Helmet>
         <meta name="robots" content="noindex, nofollow" />
       </Helmet>
 
-      <div className="space-y-6">
-        {loading && <div className="rounded-[24px] border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">Loading platform data…</div>}
-
-        {error && (
-          <div className="rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            Could not load platform data: {error}
-          </div>
-        )}
+      <div className="space-y-6" data-role="admin">
+        {loading && <Skeleton height={220} />}
+        {error && <ErrorState message={`Couldn't load platform data: ${error}`} onRetry={load} />}
 
         {data && (
           <>
-            <div className="rounded-[30px] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.18),_transparent_35%),white] p-6 shadow-sm">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">Platform overview</p>
-                  <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-900">Operations are stable.</h2>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={loadDashboard}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-blue-200 hover:text-blue-700"
-                  >
-                    <RefreshCcw size={14} /> Refresh
+            <div className="dg-hero">
+              <i className="dg-orb dg-o1" />
+              <i className="dg-orb dg-o2" />
+              <div className="dg-grow">
+                <div className="dg-day">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+                <HeroTitle text="Platform overview" />
+                <p>
+                  {data.active_enrollments} active enrollment{data.active_enrollments === 1 ? '' : 's'} across {data.total_courses} course{data.total_courses === 1 ? '' : 's'},
+                  taught by {data.total_instructors} instructor{data.total_instructors === 1 ? '' : 's'}.
+                </p>
+                <div className="dg-bt">
+                  <button type="button" className="dg-btn" onClick={() => document.getElementById('allocation')?.scrollIntoView({ behavior: 'smooth' })}>
+                    View resource allocation
                   </button>
-                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700">
-                    <ShieldCheck size={14} />
-                    Connected to production-ready metrics
-                  </div>
+                  <a className="dg-btn dg-ghost" href={djangoAdminUrl()} target="_blank" rel="noreferrer">
+                    Open Django admin <ExternalLink size={14} />
+                  </a>
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="dg-grid">
               {quickActions.map(({ label, subtitle, href, icon: Icon }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => navigate(href)}
-                  className={`quick-action ${label === 'Students' ? 'primary' : label === 'Submissions' ? 'accent' : ''}`}
-                >
-                  <span className="quick-icon"><Icon size={18} /></span>
-                  <span>
-                    <strong>{label}</strong>
-                    <small>{subtitle}</small>
+                <button key={label} type="button" onClick={() => navigate(href)} className="dg-card dg-c4" style={{ display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left', cursor: 'pointer' }}>
+                  <span className="dg-ic" style={{ float: 'none' }}><Icon size={18} /></span>
+                  <span style={{ flex: 1 }}>
+                    <strong style={{ display: 'block' }}>{label}</strong>
+                    <small style={{ color: 'var(--mut)' }}>{subtitle}</small>
                   </span>
                   <ArrowRight size={16} />
                 </button>
               ))}
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Stat label="Students" value={data.total_students} icon={Users} />
-              <Stat label="Instructors" value={data.total_instructors} icon={Briefcase} />
-              <Stat label="Courses" value={data.total_courses} icon={BookOpen} />
-              <Stat label="Enrollments" value={data.active_enrollments} icon={Activity} />
+            <div className="dg-grid">
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><Users /></span>
+                <div className="dg-l">Total students</div>
+                <div className="dg-v"><CountUp value={data.total_students} /></div>
+                <div className="dg-d">&nbsp;</div>
+              </div>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><Briefcase /></span>
+                <div className="dg-l">Instructors</div>
+                <div className="dg-v"><CountUp value={data.total_instructors} /></div>
+                <div className="dg-d">&nbsp;</div>
+              </div>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><BookOpen /></span>
+                <div className="dg-l">Courses</div>
+                <div className="dg-v"><CountUp value={data.total_courses} /></div>
+                <div className="dg-d">&nbsp;</div>
+              </div>
+              <div className="dg-card dg-kpi dg-c3">
+                <span className="dg-ic"><Activity /></span>
+                <div className="dg-l">Pending submissions</div>
+                <div className={`dg-v`}><CountUp value={data.pending_submissions} /></div>
+                <div className={`dg-d${data.pending_submissions > 0 ? ' dg-w' : ''}`}>Platform-wide</div>
+              </div>
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm floating-card">
-                <h3 className="text-xl font-bold tracking-tight text-slate-900">Platform health</h3>
-
-                <div className="mt-5 space-y-4">
-                  <MetricRow label="Pending submissions" value={data.pending_submissions} tone="amber" />
-                  <MetricRow label="Student-to-instructor ratio" value={`${studentToInstructorRatio}:1`} tone="violet" />
-                  <MetricRow label="Active enrollment coverage" value={`${Math.min(100, Math.round((data.active_enrollments / Math.max(data.total_students, 1)) * 100))}%`} tone="emerald" />
+            <div className="dg-grid">
+              <Card span={4}>
+                <h3>Students vs instructors</h3>
+                <div className="dg-sub">{data.total_students + data.total_instructors} accounts</div>
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <Donut slices={[
+                    { label: 'Students', value: data.total_students, color: 'var(--acc)' },
+                    { label: 'Instructors', value: data.total_instructors, color: 'var(--h2)' },
+                  ]} />
                 </div>
+                <DonutLegend slices={[
+                  { label: 'Students', value: data.total_students, color: 'var(--acc)' },
+                  { label: 'Instructors', value: data.total_instructors, color: 'var(--h2)' },
+                ]} />
+              </Card>
+
+              <Card span={8}>
+                <h3>Enrollment coverage</h3>
+                <div className="dg-sub">Active enrollments relative to total students</div>
+                {enrollmentCoverage == null ? (
+                  <EmptyState message="No students yet." />
+                ) : (
+                  <>
+                    <div style={{ fontSize: 42, fontWeight: 700, letterSpacing: '-0.02em' }}>{enrollmentCoverage}%</div>
+                    <div style={{ marginTop: 8 }}><div className="dg-bar" style={{ height: 12 }}><i style={{ width: `${enrollmentCoverage}%` }} /></div></div>
+                    <p className="dg-sub" style={{ marginTop: 10 }}>
+                      {data.active_enrollments} enrollment{data.active_enrollments === 1 ? '' : 's'} across {data.total_students} student{data.total_students === 1 ? '' : 's'} — students can enroll in more than one course, so this can exceed 100%.
+                    </p>
+                  </>
+                )}
+              </Card>
+            </div>
+
+            <div className="dg-card dg-c12">
+              <div className="dg-ch">
+                <div>
+                  <h3>Registered students</h3>
+                  <div className="dg-sub">Every learner on the platform, even if they are not enrolled in a course yet.</div>
+                </div>
+                <Users size={18} style={{ color: 'var(--acc)' }} />
               </div>
 
-              <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm floating-card">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold tracking-tight text-slate-900">Quick pulse</h3>
-                  <Zap size={18} className="text-blue-600" />
-                </div>
-
-                <div className="mt-5 rounded-[22px] border border-blue-100 bg-[linear-gradient(135deg,_rgba(59,130,246,0.08),_rgba(139,92,246,0.06))] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">AI monitor</p>
-                    <span className="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-                      Healthy
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-slate-700">
-                    Platform engagement is steady and student participation remains above target across the current cycle.
-                  </p>
-
-                  <div className="mt-4">
-                    <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      <span>System health</span>
-                      <span>{platformHealth}%</span>
+              <div className="mt-4 space-y-3">
+                {(data.registered_students || []).map((student) => (
+                  <div key={student.id} className="flex flex-col gap-2 rounded-xl border border-line bg-panel px-3 py-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="font-medium text-ink">{student.full_name || student.username}</div>
+                      <div className="text-xs text-text-dim">{student.email}</div>
                     </div>
-                    <TrendBars values={trendValues} />
+                    <div className="text-xs text-text-muted">
+                      {student.enrolled_courses.length > 0
+                        ? student.enrolled_courses.map((course) => course.title).join(' · ')
+                        : 'Not enrolled yet'}
+                    </div>
                   </div>
-                </div>
-
-                <div className="mt-5 space-y-4">
-                  <InsightCard title="Students" value={data.total_students} caption="Tracked learners" />
-                  <InsightCard title="Instructors" value={data.total_instructors} caption="Course owners" />
-                  <InsightCard title="Open reviews" value={data.pending_submissions} caption="Submission queue" />
-                </div>
+                ))}
+                {(data.registered_students || []).length === 0 && <EmptyState message="No registered students yet." />}
               </div>
+            </div>
+
+            {/* Course & Resource Allocation Optimization */}
+            <div id="allocation" className="dg-card dg-c12">
+              <div className="dg-ch">
+                <div>
+                  <h3>Resource allocation</h3>
+                  <div className="dg-sub">Instructor load balance and course capacity — a weighted scoring model, not a guess. See the reason on every recommendation.</div>
+                </div>
+                <Gauge size={18} style={{ color: 'var(--acc)' }} />
+              </div>
+
+              {planError && <ErrorState message={planError} onRetry={load} />}
+              {!planError && !plan && <Skeleton height={200} />}
+
+              {plan && (
+                <>
+                  <div className="dg-grid" style={{ marginTop: 4 }}>
+                    <div className="dg-c5">
+                      <h4 style={{ fontSize: 13, fontWeight: 700, margin: '4px 0 10px', color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Instructor load</h4>
+                      {plan.instructor_loads.length === 0 && <EmptyState message="No instructors yet." />}
+                      {plan.instructor_loads.map((i) => (
+                        <div key={i.instructor_id} className="dg-row">
+                          <div className="dg-g">
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                              <b>{i.instructor_name}</b>
+                              <span>{i.load} {plan.average_instructor_load ? `(avg ${plan.average_instructor_load})` : ''}</span>
+                            </div>
+                            <small>{i.courses.join(', ')} · {i.total_enrolled} students · {i.total_pending} pending grades</small>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="dg-c7">
+                      <h4 style={{ fontSize: 13, fontWeight: 700, margin: '4px 0 10px', color: 'var(--mut)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Recommendations</h4>
+                      {plan.recommendations.length === 0 && <EmptyState message="Load is balanced — no changes recommended right now." />}
+                      {plan.recommendations.map((r, i) => (
+                        <div key={i} className="dg-row" style={{ alignItems: 'flex-start' }}>
+                          <div className="dg-g">
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <Pill tone={PRIORITY_TONE[r.priority]}>{r.priority} priority</Pill>
+                              <span className="dg-sub" style={{ margin: 0, textTransform: 'capitalize' }}>{r.type.replace(/_/g, ' ')}</span>
+                            </div>
+                            <p style={{ margin: '6px 0 0', fontSize: 13 }}>{r.reason}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}
       </div>
     </DashboardLayout>
-  )
-}
-
-function Stat({ label, value, icon: Icon }) {
-  return (
-    <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
-        <Icon size={18} className="text-blue-600" />
-      </div>
-      <p className="mt-4 text-3xl font-black text-slate-900">{value}</p>
-    </div>
-  )
-}
-
-function MetricRow({ label, value, tone }) {
-  const toneStyles = {
-    amber: 'bg-amber-100 text-amber-700',
-    violet: 'bg-violet-100 text-violet-700',
-    emerald: 'bg-emerald-100 text-emerald-700',
-  }
-
-  return (
-    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-slate-600">{label}</span>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${toneStyles[tone]}`}>{value}</span>
-      </div>
-    </div>
-  )
-}
-
-function InsightCard({ title, value, caption }) {
-  return (
-    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{title}</p>
-      <p className="mt-3 text-2xl font-black text-slate-900">{value}</p>
-      <p className="mt-1 text-sm text-slate-500">{caption}</p>
-    </div>
   )
 }

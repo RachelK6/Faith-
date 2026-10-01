@@ -1,112 +1,180 @@
 """
-Code execution — thin client to an external sandbox service.
+Code execution — a thin, defensive client for an isolated runner service.
 
-Per the brief (section 6): "Code execution should be isolated from the
-main application to prevent unsafe code from affecting the platform."
-Running student code inside this Django process would defeat that
-requirement entirely, so this view does not execute anything itself —
-it forwards the request to SANDBOX_URL (see settings.py / .env) and
-returns whatever that service reports.
+Student code is never run inside Django. It is sent to SANDBOX_URL (see the
+/sandbox directory for the reference runner + its container limits).
 
-SANDBOX_URL should point to a dedicated code-execution service such as
-Judge0, Piston, or a custom Docker-based runner — evaluate and stand
-that up as its own piece of infrastructure, not inside this repo.
+What THIS layer is responsible for (the runner enforces CPU/memory/time/
+network limits; see sandbox/README.md):
+  * who may run code: authenticated users; for /test/ students must be
+    enrolled in the course and have the module unlocked, instructors must
+    teach the course
+  * input hygiene: language allowlist, size caps, and ONLY {language, code,
+    stdin} are forwarded — a client cannot smuggle extra fields such as
+    timeouts or memory limits through to the runner
+  * rate limiting (each run costs real CPU)
+  * keeping answer keys private: expected outputs stay in Django and never
+    reach the runner; students only see pass/fail (plus details for tests an
+    instructor explicitly marks "public": true)
+  * containing failures: runner errors and internal URLs never reach the client
 """
+import json
+import logging
+
 import requests
+from django.conf import settings
 from rest_framework import permissions
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
-from django.conf import settings
+from apps.accounts.access import STUDENT, require_student_access, require_teaches, role_of
 
-# Keep runaway/adversarial payloads from reaching the sandbox at all.
+logger = logging.getLogger(__name__)
+
+ALLOWED_LANGUAGES = {"python", "javascript"}
 MAX_CODE_LENGTH = 20_000
+MAX_STDIN_LENGTH = 10_000
+MAX_TEST_CASES = 25
+MAX_OUTPUT_CHARS = 10_000
+CONNECT_TIMEOUT = 3
+RUN_READ_TIMEOUT = 15          # runner's own wall clock limit is lower (see sandbox/runner.py)
+TEST_READ_TIMEOUT = 60
+
+
+class CodeRunThrottle(UserRateThrottle):
+    scope = "code_run"
+
+
+def _clean_request(request, require_code=True):
+    code, language = request.data.get("code"), request.data.get("language")
+    if not isinstance(language, str) or language not in ALLOWED_LANGUAGES:
+        raise ValidationError({"language": f"Choose one of: {', '.join(sorted(ALLOWED_LANGUAGES))}."})
+    if not isinstance(code, str) or not code.strip():
+        raise ValidationError({"code": "Code is required."})
+    if len(code) > MAX_CODE_LENGTH:
+        raise ValidationError({"code": f"Code exceeds the {MAX_CODE_LENGTH}-character limit."})
+    return language, code
+
+
+def _call_runner(payload, read_timeout):
+    """POST to the runner. Returns parsed JSON or raises a generic 503-style error."""
+    try:
+        resp = requests.post(
+            f"{settings.SANDBOX_URL}/run",
+            json=payload,
+            headers={"X-Sandbox-Token": settings.SANDBOX_TOKEN},
+            timeout=(CONNECT_TIMEOUT, read_timeout),
+        )
+        data = resp.json()
+        if resp.status_code != 200 or not isinstance(data, dict):
+            raise ValueError(f"runner returned HTTP {resp.status_code}")
+        return data
+    except (requests.RequestException, ValueError) as exc:
+        logger.error("Code runner failure: %s", exc)   # detail stays in the logs
+        return None
+
+
+def _trim(text):
+    text = text if isinstance(text, str) else ""
+    return text[:MAX_OUTPUT_CHARS] + ("\n…output truncated" if len(text) > MAX_OUTPUT_CHARS else "")
+
+
+def _unavailable():
+    return Response({"error": "The code runner is temporarily unavailable. Please try again shortly."}, status=503)
 
 
 class RunCodeView(APIView):
-    """
-    POST /api/execute/run/
-    body: {"language": "javascript", "code": "...", "stdin": ""}
-    Free-form scratchpad run — not tied to any activity, so there's no
-    assessment content to protect and no module-lock check needed here.
-    """
+    """POST /api/execute/run/  {language, code, stdin?}  — free-form scratchpad."""
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request):
-        code = request.data.get("code")
-        language = request.data.get("language")
-        if not code or not language:
-            raise ValidationError("Both 'language' and 'code' are required.")
-        if len(code) > MAX_CODE_LENGTH:
-            raise ValidationError(f"Code exceeds the {MAX_CODE_LENGTH}-character limit.")
+    def get_throttles(self):
+        return [CodeRunThrottle()]
 
-        try:
-            resp = requests.post(
-                f"{settings.SANDBOX_URL}/run",
-                json=request.data,
-                timeout=10,
-            )
-            return Response(resp.json(), status=resp.status_code)
-        except requests.RequestException as exc:
-            return Response(
-                {"error": f"Sandbox service unavailable: {exc}"},
-                status=503,
-            )
+    def post(self, request):
+        language, code = _clean_request(request)
+        stdin = request.data.get("stdin", "")
+        if not isinstance(stdin, str) or len(stdin) > MAX_STDIN_LENGTH:
+            raise ValidationError({"stdin": f"stdin must be text of at most {MAX_STDIN_LENGTH} characters."})
+
+        result = _call_runner({"language": language, "code": code, "stdin": stdin}, RUN_READ_TIMEOUT)
+        if result is None:
+            return _unavailable()
+        return Response({
+            "stdout": _trim(result.get("stdout")),
+            "stderr": _trim(result.get("stderr")),
+            "exit_code": result.get("exit_code"),
+            "timed_out": bool(result.get("timed_out")),
+        })
 
 
 class RunTestsView(APIView):
     """
-    POST /api/execute/test/
-    body: {"language": "javascript", "code": "...", "activity_id": 12}
-    Loads the activity's test_cases and runs the student's code against
-    each one via the sandbox, returning pass/fail per case + overall score
-    (brief section 7).
+    POST /api/execute/test/  {language, code, activity_id}
+    Runs the code once per test case (input -> stdin) and compares stdout with
+    the expected output *here*, not in the runner.
 
-    SECURITY: this endpoint reveals an activity's test cases (and thus a
-    hint about the expected solution), so it must respect the same
-    module-locking rule as every other content endpoint — otherwise a
-    student could bypass locking entirely just by guessing/incrementing
-    activity_id and hitting this URL directly, which is precisely the
-    bypass brief section 4 calls out ("manually changing URLs or making
-    direct API requests").
+    Response (students): {"passed": 2, "total": 3, "score": 66.7,
+      "results": [{"index": 1, "passed": true}, ...]}. Details of a case
+    (input/expected/actual) are included only if the instructor set
+    "public": true on it, or for staff.
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_throttles(self):
+        return [CodeRunThrottle()]
+
     def post(self, request):
-        from apps.courses.models import Activity
-        from apps.progress.services import is_module_unlocked
+        from apps.courses.models import Activity, ActivityType
 
-        code = request.data.get("code")
-        language = request.data.get("language")
-        activity_id = request.data.get("activity_id")
-        if not code or not language or not activity_id:
-            raise ValidationError("'language', 'code', and 'activity_id' are all required.")
-        if len(code) > MAX_CODE_LENGTH:
-            raise ValidationError(f"Code exceeds the {MAX_CODE_LENGTH}-character limit.")
-
+        language, code = _clean_request(request)
         try:
-            activity = Activity.objects.select_related("lesson__module").get(pk=activity_id)
-        except Activity.DoesNotExist:
+            activity = Activity.objects.select_related("lesson__module__course").get(pk=request.data.get("activity_id"))
+        except (Activity.DoesNotExist, ValueError, TypeError):
             raise NotFound("Activity not found.")
 
-        student = request.user
-        if student.role == "student" and not is_module_unlocked(student, activity.lesson.module):
-            raise PermissionDenied("This module is locked — complete the previous module first.")
+        user = request.user
+        course = activity.lesson.module.course
+        if role_of(user) == STUDENT:
+            try:
+                require_student_access(user, activity.lesson.module)
+            except PermissionDenied:
+                raise NotFound("Activity not found.")   # don't reveal activities in courses they can't reach
+        else:
+            require_teaches(user, course)
+        staff = role_of(user) != STUDENT
 
-        try:
-            resp = requests.post(
-                f"{settings.SANDBOX_URL}/test",
-                json={
-                    "language": language,
-                    "code": code,
-                    "test_cases": activity.test_cases or [],
-                },
-                timeout=15,
-            )
-            return Response(resp.json(), status=resp.status_code)
-        except requests.RequestException as exc:
-            return Response(
-                {"error": f"Sandbox service unavailable: {exc}"},
-                status=503,
-            )
+        if activity.activity_type not in (ActivityType.EXERCISE, ActivityType.LAB):
+            raise ValidationError("This activity has no automated tests.")
+        cases = activity.test_cases if isinstance(activity.test_cases, list) else []
+        if not cases:
+            raise ValidationError("This activity has no test cases yet.")
+        cases = cases[:MAX_TEST_CASES]
+
+        results, passed = [], 0
+        for i, case in enumerate(cases, start=1):
+            case = case if isinstance(case, dict) else {}
+            stdin = case.get("input", "")
+            stdin = stdin if isinstance(stdin, str) else json.dumps(stdin)
+            expected = case.get("expected_output", "")
+            expected = expected if isinstance(expected, str) else json.dumps(expected)
+
+            run = _call_runner({"language": language, "code": code, "stdin": stdin[:MAX_STDIN_LENGTH]}, TEST_READ_TIMEOUT)
+            if run is None:
+                return _unavailable()
+            actual = (run.get("stdout") or "")
+            ok = (not run.get("timed_out")) and run.get("exit_code") == 0 and actual.strip() == expected.strip()
+            passed += ok
+            row = {"index": i, "passed": ok, "timed_out": bool(run.get("timed_out"))}
+            if not ok and run.get("exit_code") not in (0, None):
+                row["error"] = _trim(run.get("stderr"))[-1000:]      # the student's own traceback
+            if staff or case.get("public") is True:
+                row.update({"input": stdin, "expected_output": expected, "actual_output": _trim(actual)})
+            results.append(row)
+
+        return Response({
+            "passed": passed, "total": len(results),
+            "score": round(passed / len(results) * 100, 1),
+            "results": results,
+        })

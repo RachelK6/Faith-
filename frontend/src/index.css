@@ -1,24 +1,37 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
+@import './styles/dashboard-tokens.css';
 
 @theme {
+  --color-primary: #3464f0;
+  --color-primary-light: #dce7ff;
+  --color-primary-hover: #18328c;
+  --color-primary-foreground: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #64748b;
+  --color-border: #e2e8f0;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+
   --color-paper: #ffffff;
   --color-panel: #f8fafc;
-  --color-panel-raised: #eef2ff;
-  --color-line: #e2e8f0;
-  --color-ink: #0f172a;
-  --color-text: #0f172a;
+  --color-panel-raised: #eff6ff;
+  --color-line: #dfe7f3;
+  --color-ink: #111827;
+  --color-text: #111827;
   --color-text-muted: #475569;
-  --color-text-dim: #94a3b8;
-  --color-coral: #8b5cf6;
-  --color-coral-dim: #7c3aed;
-  --color-coral-tint: #f3e8ff;
-  --color-mint: #10b981;
-  --color-mint-tint: #d1fae5;
-  --color-blue: #2563eb;
+  --color-text-dim: #64748b;
+  --color-coral: #3464f0;
+  --color-coral-dim: #18328c;
+  --color-coral-tint: #dce7ff;
+  --color-mint: #22c55e;
+  --color-mint-tint: #dcfce7;
+  --color-blue: #18328c;
 
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'SFMono-Regular', 'Consolas', monospace;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Consolas', monospace;
 }
 
 :root {
@@ -41,10 +54,35 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+  background: linear-gradient(180deg, #f8fafc 0%, #eff6ff 100%);
   color: var(--color-text);
   font-family: var(--font-sans);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
 }
+
+/* NOTE: these element rules are intentionally UNLAYERED. The dashboards were authored with
+   dark-theme utility classes (text-white etc.) and rely on these rules forcing dark text on
+   their light cards. Moving them into @layer base un-masks those classes and makes dashboard
+   numbers near-invisible. Surfaces that genuinely need light text on a coloured background
+   (the auth hero panels) opt in explicitly below. */
+h1, h2, h3, h4, h5, h6, p, small, span, div, button, input, select, textarea { color: inherit; }
+
+h1, h2, h3, h4, h5, h6 {
+  color: #111827;
+  letter-spacing: -0.02em;
+}
+
+p, li, small, label {
+  color: #334155;
+}
+
+/* Auth hero (login/register): white text on the blue panel. */
+.auth-hero h1, .auth-hero h2, .auth-hero h3, .auth-hero p, .auth-hero li, .auth-hero small, .auth-hero label,
+.auth-hero span, .auth-hero div { color: inherit; }
+.auth-hero .auth-badge, .auth-hero .auth-badge * { color: var(--color-primary); }
+.auth-hero .bg-surface { color: var(--color-primary); }
 
 img,
 svg,
@@ -61,6 +99,130 @@ select {
 
 #root {
   min-height: 100vh;
+}
+
+.auth-hero {
+  color: var(--color-primary-foreground);
+  background: linear-gradient(180deg, #0A1F5C 0%, #0F3CB8 45%, #1E63FF 100%);
+}
+
+.auth-brand {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  text-align: center;
+}
+
+.auth-brand::before {
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  left: 50%;
+  width: 280px;
+  height: 230px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(61, 153, 255, 0.12) 0%, rgba(61, 153, 255, 0) 72%);
+  content: '';
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.auth-brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-brand-title,
+.auth-brand-subtitle {
+  margin: 0;
+}
+
+.auth-brand-title {
+  color: #fff;
+  font-size: 1.75rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.auth-brand-title span:last-child {
+  color: #AFCBFF;
+}
+
+.auth-hero .auth-brand-subtitle {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.auth-feature {
+  border: 1px solid rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 5%);
+  color: var(--color-primary-foreground);
+}
+
+.auth-badge {
+  border: 1px solid var(--color-surface);
+  background: var(--color-surface);
+  color: var(--color-primary);
+}
+
+.auth-demo {
+  border: 1px solid rgb(255 255 255 / 24%);
+  background: rgb(255 255 255 / 5%);
+  color: var(--color-primary-foreground);
+}
+
+.auth-demo:hover {
+  background: rgb(255 255 255 / 20%);
+}
+
+.auth-danger {
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, white);
+  background: color-mix(in srgb, var(--color-danger) 6%, white);
+  color: var(--color-danger);
+}
+
+.lms-focus-ring:focus-visible {
+  box-shadow: 0 0 0 3px var(--color-primary);
+}
+
+.landing-hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 1.5rem;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.landing-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid #1e40af;
+  border-radius: 0.75rem;
+  background: #1d4ed8;
+  padding: 0.75rem 1rem;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 700;
+  box-shadow: 0 4px 12px rgb(30 64 175 / 20%);
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+
+.landing-primary:hover {
+  background: #1e40af;
+  transform: translateY(-1px);
+}
+
+.landing-primary:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
 }
 
 @keyframes cursor-blink {
@@ -90,10 +252,10 @@ select {
 @keyframes pulseGlow {
   0%,
   100% {
-    box-shadow: 0 0 0 rgba(139, 92, 246, 0.18);
+    box-shadow: 0 0 0 rgba(59, 130, 246, 0.18);
   }
   50% {
-    box-shadow: 0 0 24px rgba(139, 92, 246, 0.18);
+    box-shadow: 0 0 24px rgba(59, 130, 246, 0.18);
   }
 }
 
@@ -113,22 +275,22 @@ select {
   background: rgba(255, 255, 255, 0.92);
   color: #0f172a;
   text-align: left;
-  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.04);
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  box-shadow: none;
+  transition: none;
 }
 
 .quick-action:hover {
-  transform: translateY(-2px);
-  border-color: rgba(139, 92, 246, 0.38);
-  box-shadow: 0 18px 35px rgba(124, 58, 237, 0.12);
+  transform: none;
+  border-color: #e2e8f0;
+  box-shadow: none;
 }
 
 .quick-action.primary {
-  background: linear-gradient(135deg, #f5f3ff 0%, #eef2ff 100%);
+  background: linear-gradient(135deg, #eff6ff 0%, #eff6ff 100%);
 }
 
 .quick-action.accent {
-  background: linear-gradient(135deg, #ede9fe 0%, #f5f3ff 100%);
+  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
 }
 
 .quick-action strong,
@@ -152,21 +314,21 @@ select {
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 0.8rem;
-  background: linear-gradient(135deg, #ede9fe 0%, #dbeafe 100%);
-  color: #5b21b6;
+  background: linear-gradient(135deg, #dbeafe 0%, #dbeafe 100%);
+  color: #1e40af;
 }
 
 .floating-card {
-  animation: floatSoft 4.5s ease-in-out infinite;
+  animation: none;
 }
 
 .insight-pill {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid rgba(167, 139, 250, 0.3);
-  background: rgba(139, 92, 246, 0.08);
-  color: #5b21b6;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: rgba(59, 130, 246, 0.08);
+  color: #1e40af;
   padding: 0.45rem 0.8rem;
   font-size: 0.73rem;
   font-weight: 700;
@@ -199,11 +361,90 @@ select {
   flex: 1;
   min-height: 0.8rem;
   border-radius: 0.75rem 0.75rem 0 0;
-  background: linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%);
-  box-shadow: 0 10px 20px rgba(124, 58, 237, 0.2);
-  transition: transform 200ms ease;
+  background: linear-gradient(180deg, #60a5fa 0%, #2563eb 100%);
+  box-shadow: none;
+  transition: none;
 }
 
 .metric-bar:hover {
-  transform: translateY(-2px);
+  transform: none;
+}
+
+.dashboard-shell {
+  --bg: var(--dashboard-bg);
+  --card: var(--dashboard-surface);
+  --ink: var(--dashboard-ink);
+  --mut: var(--dashboard-muted);
+  --line: var(--dashboard-border);
+  --side: var(--dashboard-surface-muted);
+  --color-paper: var(--dashboard-surface);
+  --color-panel: var(--dashboard-surface-muted);
+  --color-panel-raised: var(--dashboard-surface-muted);
+  --color-line: var(--dashboard-border);
+  --color-ink: var(--dashboard-ink);
+  --color-text: var(--dashboard-ink);
+  --color-text-primary: var(--dashboard-ink);
+  --color-text-secondary: var(--dashboard-muted);
+  --color-text-muted: var(--dashboard-muted);
+  --color-text-dim: var(--dashboard-muted);
+  background-color: var(--dashboard-bg);
+  color: var(--dashboard-ink);
+}
+
+.dashboard-sidebar,
+.dashboard-header {
+  background-color: var(--dashboard-surface) !important;
+  border-color: var(--dashboard-border) !important;
+  color: var(--dashboard-ink) !important;
+}
+
+.dashboard-content,
+.dashboard-main {
+  background-color: var(--dashboard-bg) !important;
+  color: var(--dashboard-ink);
+}
+
+.dashboard-shell .bg-white,
+.dashboard-shell .bg-paper {
+  background-color: var(--dashboard-surface) !important;
+}
+
+.dashboard-shell .bg-slate-50,
+.dashboard-shell .bg-slate-100,
+.dashboard-shell .bg-panel {
+  background-color: var(--dashboard-surface-muted) !important;
+}
+
+.dashboard-shell .text-slate-900,
+.dashboard-shell .text-slate-800,
+.dashboard-shell .text-ink {
+  color: var(--dashboard-ink) !important;
+}
+
+.dashboard-shell .text-slate-700,
+.dashboard-shell .text-slate-600,
+.dashboard-shell .text-slate-500,
+.dashboard-shell .text-slate-400,
+.dashboard-shell .text-text-muted,
+.dashboard-shell .text-text-dim {
+  color: var(--dashboard-muted) !important;
+}
+
+.dashboard-shell .border-slate-200,
+.dashboard-shell .border-slate-300,
+.dashboard-shell .border-line,
+.dashboard-shell .divide-slate-700 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--dashboard-border) !important;
+}
+
+.dashboard-shell .dg-hero h1 { color: var(--dashboard-hero-ink); }
+.dashboard-shell .dg-hero p,
+.dashboard-shell .dg-hero .dg-day { color: var(--dashboard-hero-muted); }
+.dashboard-shell .dg-card h2,
+.dashboard-shell .dg-card h3,
+.dashboard-shell .dg-card h4 { color: var(--dashboard-ink); }
+
+:root[data-theme='dark'] .dashboard-shell .dg-hero {
+  border-color: #34445b;
+  background: linear-gradient(125deg, #10213c 0%, #142b4d 55%, #173a61 100%);
 }

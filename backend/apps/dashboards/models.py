@@ -87,7 +87,13 @@ class PerformanceSnapshot(models.Model):
         login_count = max(1, quiz_attempts.count() + assignment_submissions.count())
         active_days = min(7, max(1, (quiz_attempts.count() + assignment_submissions.count())))
         time_spent_minutes = float(login_count * 18)
-        video_watch_minutes = 0.0
+        from django.db.models import Sum
+        from apps.progress.models import VideoProgress
+        video_seconds = VideoProgress.objects.filter(
+            student=student, lesson__module__course=course,
+            updated_at__gte=start, updated_at__lt=end,  # approximation: lessons watched this week
+        ).aggregate(t=Sum("watched_seconds"))["t"] or 0.0
+        video_watch_minutes = video_seconds / 60.0
         content_consumed_pct = completion_rate
 
         total_modules = Module.objects.filter(course=course).count() or 1
