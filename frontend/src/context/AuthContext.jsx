@@ -24,10 +24,15 @@ export function AuthProvider({ children }) {
     return { role: live[0].role, email: live[0].email }
   })
 
-  const login = useCallback(async (email, password) => {
+  const login = useCallback(async (email, password, expectedRole) => {
     const tokens = await api.login(email, password)
-    setTokens(tokens)
     const payload = decodeToken(tokens.access)
+    if (!payload?.role) throw new Error('The server returned an invalid sign-in session. Please try again.')
+    if (expectedRole && payload.role !== expectedRole) {
+      const roleName = { student: 'student', instructor: 'instructor', admin: 'administrator' }[payload.role] || 'assigned'
+      throw new Error(`This account is registered as ${roleName}. Choose that account type and try again.`)
+    }
+    setTokens(tokens)
     const session = { role: payload.role, email: payload.email }
     setAuth(session)
     return session

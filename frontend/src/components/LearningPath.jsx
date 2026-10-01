@@ -14,6 +14,7 @@ const statusMeta = {
 export default function LearningPath({ modules = [], onSelectModule }) {
   const [selected, setSelected] = useState(null)
   const completed = modules.filter((module) => module.status === 'done' || module.status === 'mastered').length
+  const completedPercent = modules.length ? Math.round((completed / modules.length) * 100) : 0
 
   return (
     <div>
@@ -28,10 +29,12 @@ export default function LearningPath({ modules = [], onSelectModule }) {
             const meta = statusMeta[status]
             const locked = status === 'locked'
             const StatusIcon = meta.icon
+            const moduleKey = module.module_id || module.id || `${module.order}-${module.title}`
+            const selectedHere = selected && String(selected.module_id || selected.id) === String(moduleKey)
             const progressToHere = modules.slice(0, index + 1).every((item) => item.status === 'done' || item.status === 'mastered')
 
             return (
-              <li key={module.module_id || module.id || `${module.order}-${module.title}`} className={`learning-path-step learning-path-step-${status} relative w-36 shrink-0 px-2 sm:w-40`} style={{ '--path-delay': `${Math.min(index * 65, 780)}ms` }}>
+              <li key={moduleKey} className={`learning-path-step learning-path-step-${status} relative w-36 shrink-0 px-2 sm:w-40`} style={{ '--path-delay': `${Math.min(index * 65, 780)}ms` }}>
                 {index < modules.length - 1 && (
                   <span
                     className={`learning-path-connector ${progressToHere ? 'learning-path-connector-done' : ''}`}
@@ -40,9 +43,10 @@ export default function LearningPath({ modules = [], onSelectModule }) {
                 )}
                 <button
                   type="button"
-                  className={`learning-path-node ${meta.className} relative z-10 mx-auto grid h-12 w-12 place-items-center rounded-full border-2 transition-colors lms-focus-ring disabled:cursor-not-allowed ${locked ? '' : 'cursor-pointer'}`}
+                  className={`learning-path-node ${meta.className} ${selectedHere ? 'learning-path-node-selected' : ''} relative z-10 mx-auto grid h-12 w-12 place-items-center rounded-full border-2 transition-colors lms-focus-ring disabled:cursor-not-allowed ${locked ? '' : 'cursor-pointer'}`}
                   disabled={locked}
                   aria-current={status === 'current' || status === 'active' ? 'step' : undefined}
+                  aria-pressed={selectedHere || false}
                   aria-label={`Module ${module.order || index + 1}: ${module.title}, ${meta.label}${module.mastery != null ? `, ${module.mastery}% mastery` : ''}`}
                   onClick={() => {
                     setSelected(module)
@@ -55,7 +59,8 @@ export default function LearningPath({ modules = [], onSelectModule }) {
                 <span className="mt-3 block min-h-10 text-center text-xs font-semibold leading-5 text-slate-200" title={module.title}>
                   {module.title}
                 </span>
-                <span className={`mt-0.5 block text-center text-[10px] font-medium ${status === 'failed' ? 'text-amber-300' : status === 'mastered' ? 'text-amber-200' : status === 'done' ? 'text-emerald-300' : status === 'locked' ? 'text-slate-500' : 'text-blue-200'}`}>
+                <span className={`learning-path-status mt-0.5 inline-flex min-h-5 items-center justify-center rounded-full border px-2 text-center text-[11px] font-semibold ${status === 'failed' ? 'learning-path-label-failed' : status === 'mastered' ? 'learning-path-label-mastered' : status === 'done' ? 'learning-path-label-done' : status === 'locked' ? 'learning-path-label-locked' : 'learning-path-label-current'}`}>
+                  {(status === 'current' || status === 'active') && <span className="learning-path-current-dot" aria-hidden="true" />}
                   {meta.label}
                 </span>
               </li>
@@ -64,7 +69,15 @@ export default function LearningPath({ modules = [], onSelectModule }) {
         </ol>
       </div>
 
-      <p className="mt-2 text-xs text-slate-400" role="status">{completed} of {modules.length} modules completed</p>
+      <div className="learning-path-progress mt-3" role="status" aria-label={`${completed} of ${modules.length} modules completed`}>
+        <div className="mb-1.5 flex items-center justify-between text-xs text-slate-300">
+          <span>{completed} of {modules.length} modules completed</span>
+          <span className="font-semibold tabular-nums text-blue-200">{completedPercent}%</span>
+        </div>
+        <div className="learning-path-progress-track" aria-hidden="true">
+          <div className="learning-path-progress-fill" style={{ width: `${completedPercent}%` }} />
+        </div>
+      </div>
 
       {selected && (
         <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-sm" role="status">

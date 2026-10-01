@@ -11,6 +11,7 @@ import PasswordInput from '../components/PasswordInput.jsx'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [accountType, setAccountType] = useState('student')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
@@ -24,7 +25,7 @@ export default function Login() {
 
     try {
       // Email is case-insensitive and may carry stray spaces; the password is sent exactly as typed.
-      const session = await login(email.trim().toLowerCase(), password)
+      const session = await login(email.trim().toLowerCase(), password, accountType)
       navigate(`/dashboard/${session.role}`)
     } catch (err) {
       setError(err.status === 429
@@ -98,6 +99,18 @@ export default function Login() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              <label className="grid gap-1.5 text-xs font-semibold text-text-secondary">
+                Sign in as
+                <select
+                  value={accountType}
+                  onChange={(event) => setAccountType(event.target.value)}
+                  className="w-full rounded-xl border border-border bg-surface px-3 py-3 text-sm font-medium text-text-primary lms-focus-ring"
+                >
+                  <option value="student">Student</option>
+                  <option value="instructor">Instructor</option>
+                  <option value="admin">Administrator</option>
+                </select>
+              </label>
               <EmailInput value={email} onChange={(e) => setEmail(e.target.value)} />
 
               <PasswordInput

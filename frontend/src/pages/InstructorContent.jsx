@@ -23,6 +23,7 @@ export default function InstructorContent() {
   const [newCourse, setNewCourse] = useState({ title: '', description: '' })
   const [courseEdit, setCourseEdit] = useState({ title: '', description: '' })
   const [thumbnailFile, setThumbnailFile] = useState(null)
+  const [courseCoverFile, setCourseCoverFile] = useState(null)
   const [thumbnailPreview, setThumbnailPreview] = useState('')
 
   const [modules, setModules] = useState([])
@@ -172,11 +173,21 @@ export default function InstructorContent() {
     if (!courseId) return
     setBusy(true)
     try {
-      const updated = await api.patch(`/courses/${courseId}/`, {
-        title: courseEdit.title.trim(),
-        description: courseEdit.description.trim(),
-      })
+      let updated
+      if (courseCoverFile) {
+        const formData = new FormData()
+        formData.append('title', courseEdit.title.trim())
+        formData.append('description', courseEdit.description.trim())
+        formData.append('thumbnail', courseCoverFile)
+        updated = await api.put(`/courses/${courseId}/`, formData, { isFormData: true })
+      } else {
+        updated = await api.patch(`/courses/${courseId}/`, {
+          title: courseEdit.title.trim(),
+          description: courseEdit.description.trim(),
+        })
+      }
       setCourses((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setCourseCoverFile(null)
       flash('Course details saved.')
     } catch (err) {
       setError(err.message)
@@ -688,6 +699,11 @@ export default function InstructorContent() {
               <label className="grid gap-1 text-sm font-medium text-ink md:col-span-2">
                 Description
                 <textarea rows={3} value={courseEdit.description} onChange={(event) => setCourseEdit((value) => ({ ...value, description: event.target.value }))} className="rounded-md border border-line bg-paper px-3 py-2" />
+              </label>
+              <label className="grid gap-1 text-sm font-medium text-ink md:col-span-2">
+                Replace course cover
+                <input type="file" accept="image/*" onChange={(event) => setCourseCoverFile(event.target.files?.[0] || null)} className="rounded-md border border-dashed border-line bg-paper px-3 py-2 text-sm text-ink file:mr-3 file:rounded file:border-0 file:bg-blue-100 file:px-2 file:py-1 file:text-xs file:font-semibold file:text-blue-700" />
+                {courseCoverFile && <span className="text-xs font-normal text-text-muted">New cover: {courseCoverFile.name}</span>}
               </label>
               <div className="flex flex-wrap gap-2 md:col-span-2">
                 <button type="submit" disabled={busy || !courseEdit.title.trim()} className="rounded-md border border-line px-3 py-2 text-sm font-semibold text-ink disabled:opacity-60">Save details</button>

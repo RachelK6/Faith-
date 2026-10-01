@@ -44,6 +44,32 @@ class CourseBuilderApiTests(APITestCase):
         self.instructor = client_for(self.world.instructor_a)
         self.student = client_for(self.world.student_1)
 
+    def test_instructor_can_replace_course_cover_with_multipart_put_for_student_catalog(self):
+        course = self.world.course_a
+        course.thumbnail = SimpleUploadedFile(
+            "old-cover.png", b"old-cover", content_type="image/png",
+        )
+        course.save()
+
+        replacement = SimpleUploadedFile(
+            "new-cover.png", b"new-cover", content_type="image/png",
+        )
+        updated = self.instructor.put(
+            f"/api/courses/{course.id}/",
+            {"title": course.title, "description": course.description, "thumbnail": replacement},
+            format="multipart",
+        )
+
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertTrue(updated.data["thumbnail"].endswith("new-cover.png"))
+        self.assertIn("new-cover.png", updated.data["thumbnail_url"])
+
+        catalog = self.student.get("/api/courses/")
+        self.assertEqual(catalog.status_code, 200, catalog.data)
+        catalog_course = next(item for item in catalog.data if item["id"] == course.id)
+        self.assertEqual(catalog_course["thumbnail_url"], updated.data["thumbnail_url"])
+        self.assertIn("new-cover.png", catalog_course["thumbnail_url"])
+
     def test_draft_stays_hidden_until_valid_course_is_published(self):
         draft = self.instructor.post("/api/courses/", {
             "title": "Python Foundations", "description": "Build practical Python skills.", "status": "draft",
