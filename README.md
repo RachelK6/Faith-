@@ -18,7 +18,7 @@ optimum-erp-lms/
 # 1. Backend
 cd backend
 python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 cp .env.example .env
 python manage.py migrate
 python manage.py createsuperuser
@@ -37,7 +37,7 @@ npm run dev
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 python manage.py migrate
 python manage.py createsuperuser
